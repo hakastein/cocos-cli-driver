@@ -259,6 +259,30 @@ Read the arrow's right side, not the argument you typed. `--overwrite` replaces 
 
 **Asset commands are outside the scene's undo stack.** Ctrl+Z does not take back an `asset rm`, `mv` or `cp`.
 
+## The ECS kit
+
+`ecs census` reads the project's TypeScript off disk — no connection to the editor, only which project is open — and answers, per component key, who adds it, who writes it, who reads it and who removes it. It parses with the TypeScript compiler's own parser and never by text match, but runs no type checker: `--json`'s `limits` field is part of the answer rather than a disclaimer.
+
+```bash
+cocos ecs census                                # the whole asset tree
+cocos ecs census --kit db://assets/framework    # one subtree — see the warning below
+cocos ecs census --json                         # every site, and the limits
+```
+
+The finding it exists for is **a key some system reads and nothing writes**: the query matches zero entities, the feature silently never runs, and neither a unit test nor the type checker sees it.
+
+Three more readings come off the same sweep, each named after a rule of the playables' `docs/ecs.md`:
+
+| section | what it prints |
+|---|---|
+| `system named like a key` | a system whose `system('name')` label is also a declared `Entity` key, with the file of each — §6 says a system is a verb phrase and a key is a noun phrase, so the two sets do not meet. Checked live 2026-08-22: 20 of 77 on `CyberCore`, on `thuglife` and on `test-project`. |
+| `read outside its capability` | keys read from outside the folder that declares them, with the count of sites and of reading capabilities — the measure of drift from the capability's contract (§2). The names are the ones that fit the line; `--json` carries all of them. |
+| `one writer, one reader` | a key one system fills and one system reads — a merge candidate under §4a.2. A key an assembly also seeds has two producers and is not listed. |
+
+None of the three changes the verdict. They are a listing to act on, not a gate.
+
+**A `--kit` narrower than the whole tree answers `UNVERIFIED`**, because the writer it did not look for leaves a key reading as starved. Sweeping `db://assets/framework` alone flags every framework key whose only writer or only reader lives in a playable's script group.
+
 ## The editor's own log
 
 `temp/logs/project.log` is where the editor writes imports, compile errors and scene errors. Reading it needs no connection to the editor — only which project is open — so both commands work while the editor is busy.

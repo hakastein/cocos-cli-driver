@@ -130,3 +130,64 @@ test('a sweep narrowed by --kit says that a writer outside it was never looked f
     assert.match(censusSummary(census, 'x', true),
         /\nthe sweep was narrowed to --kit: a writer outside it is not counted/);
 });
+
+const keysIn = (path, ...names) => ({
+    path,
+    text: `declare module './core/world' {\n    interface Entity {\n`
+        + `${names.map(name => `        ${name}?: true;`).join('\n')}\n    }\n}\n`
+});
+
+const systemIn = (path, className, label, body) => ({
+    path,
+    text: `export class ${className} extends system('${label}', { world: GameWorld }) {\n`
+        + `    run(): void { ${body} }\n}\n`
+});
+
+const contracts = runCensus([
+    keysIn('framework/motion/locomotion/components.ts', 'speed', 'intent'),
+    keysIn('framework/motion/nav/components.ts', 'route'),
+    systemIn('framework/motion/locomotion/speed.ts', 'Speed', 'speed', 'entity.speed.value = 1;'),
+    systemIn('framework/motion/locomotion/turn.ts', 'TurnToward', 'turnToward', 'entity.intent.face = null;'),
+    systemIn('framework/motion/nav/route.ts', 'FollowRoute', 'followRoute', 'if (entity.intent) go(entity.speed);')
+]);
+
+test('a system named like a key is listed under the words the invariant is grepped by', () => {
+    assert.match(renderCensus(contracts, []),
+        /^system named like a key\n {2}speed {2}framework\/motion\/locomotion\/speed\.ts:1 {2}Speed {2}framework\/motion\/locomotion\/components\.ts:3$/m);
+});
+
+test('a key read from another capability carries both counts, so the line answers alone', () => {
+    assert.match(renderCensus(contracts, []),
+        /^ {2}intent {2}framework\/motion\/locomotion {2}read 1 from 1 {2}framework\/motion\/nav$/m);
+});
+
+test('a pair names which system writes and which reads', () => {
+    assert.match(renderCensus(contracts, []),
+        /^one writer, one reader\n {2}intent {2}turnToward writes {2}followRoute reads/m);
+});
+
+test('a listing of readers too wide to print keeps the count exact and says how many it dropped', () => {
+    const wide = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((letter, index) => [
+        keysIn(`framework/capability-with-a-long-name-${letter}/components.ts`, `own${index}`),
+        {
+            path: `framework/capability-with-a-long-name-${letter}/reader.ts`,
+            text: 'export function look(entity: Entity) { return entity.shared; }\n'
+        }
+    ]).flat();
+    const text = renderCensus(runCensus([keysIn('framework/core/components.ts', 'shared'), ...wide]), []);
+    assert.match(text, /^ {2}shared {2}framework\/core {2}read 8 from 8 {2}.*\+6 more$/m);
+});
+
+test('a kit whose systems and keys do not meet prints no section at all', () => {
+    const clean = renderCensus(runCensus([
+        keysIn('framework/motion/locomotion/components.ts', 'speed'),
+        systemIn('framework/motion/locomotion/capSpeed.ts', 'CapSpeed', 'capSpeed', 'entity.speed.value = 1;')
+    ]), []);
+    assert.equal(clean.includes('system named like a key'), false);
+    assert.equal(clean.includes('read outside its capability'), false);
+});
+
+test('the summary counts the three readings beside the per-key findings', () => {
+    assert.match(censusSummary(contracts, 'x', false),
+        /\nsystems 3 {2}named like a key: 1 {2}read outside their capability: 2 {2}one writer one reader: 2$/m);
+});

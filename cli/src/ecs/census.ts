@@ -13,6 +13,8 @@
  */
 
 import * as ts from 'typescript';
+import { oneWriterOneReader, readsOutsideCapability, systemsNamedLikeKeys } from './contracts.ts';
+import type { OutsideReader, SystemNamedLikeKey, WriterReaderPair } from './contracts.ts';
 
 export interface CensusSource {
     /** Path as it should appear in the report — the caller decides whether it is absolute or relative. */
@@ -54,6 +56,16 @@ export interface KeyDeclaration {
     type: string;
 }
 
+export interface SystemDeclaration {
+    /** The label handed to `system('…')` — what a bootstrap, a tick order and a profiler row call it. */
+    name: string;
+    className: string;
+    file: string;
+    line: number;
+    /** Last line of the class body, so a usage site can be attributed to the system it sits in. */
+    endLine: number;
+}
+
 export interface KeyReport {
     key: string;
     declaredIn: string;
@@ -85,6 +97,14 @@ export interface CensusResult {
     /** Declared, written or added, but nothing ever reads it. */
     writtenNeverRead: KeyReport[];
     keys: KeyReport[];
+    /** Every `class X extends system('name', …)` the sweep found. */
+    systems: SystemDeclaration[];
+    /** A system whose name is also a declared key: `ecs.md` §6 says the two sets do not meet. */
+    systemsNamedLikeKeys: SystemNamedLikeKey[];
+    /** Keys read from outside the folder that declares them — the divergence from `ecs.md` §2. */
+    readOutsideCapability: OutsideReader[];
+    /** One system fills the key, one system reads it: merge candidates under `ecs.md` §4a.2. */
+    oneWriterOneReader: WriterReaderPair[];
     /** Key arguments the parser could see but not resolve to a name — the census is blind to these. */
     unresolved: UnresolvedSite[];
     /** Object literals in an entity position carrying a property that is not a declared key. */
@@ -123,6 +143,9 @@ const LIMITS: string[] = [
     'A wrapper is matched by function name across the whole scanned set; two same-named local functions are treated as one.',
     'Despawn removes every component at once and is not counted as a per-key remover.',
     'A method call that mutates a component in place (`entity.key.list.push(x)`) reads as a read, not a write.',
+    'A system is recognised by `class X extends system(\'name\', …)`; one declared any other way is absent from the systems list and its name is never checked against the keys.',
+    'A capability is the folder that declares the key. A file under no declaring folder — an assembly, a playable\'s script group — is in no capability, so every read from it counts as outside one.',
+    'A site belongs to the system whose class body encloses it; a site outside every system is attributed to its file, and a file is never a merge candidate.',
 ];
 
 function truncate(text: string): string {
@@ -267,6 +290,42 @@ export function collectKeys(sources: CensusSource[]): KeyDeclaration[] {
     return declarations;
 }
 
+function systemLabel(declaration: ts.ClassDeclaration): string | null {
+    for (const clause of declaration.heritageClauses ?? []) {
+        if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+        for (const type of clause.types) {
+            const base = stripWrappers(type.expression);
+            if (!ts.isCallExpression(base) || calleeName(base) !== 'system') continue;
+            const label = base.arguments[0] === undefined ? null : stripWrappers(base.arguments[0]);
+            if (label && ts.isStringLiteralLike(label)) return label.text;
+        }
+    }
+    return null;
+}
+
+function collectSystems(parsed: { source: CensusSource; sourceFile: ts.SourceFile }[]): SystemDeclaration[] {
+    const systems: SystemDeclaration[] = [];
+    for (const { source, sourceFile } of parsed) {
+        const visit = (node: ts.Node): void => {
+            if (ts.isClassDeclaration(node) && node.name) {
+                const name = systemLabel(node);
+                if (name !== null) {
+                    systems.push({
+                        name,
+                        className: node.name.text,
+                        file: source.path,
+                        line: lineOf(sourceFile, node),
+                        endLine: sourceFile.getLineAndCharacterOfPosition(node.getEnd()).line + 1,
+                    });
+                }
+            }
+            ts.forEachChild(node, visit);
+        };
+        ts.forEachChild(sourceFile, visit);
+    }
+    return systems;
+}
+
 /**
  * Functions that take a component key as a parameter and forward it — `claim(world, entity, key, …)`
  * in the kit's assembly. Without these, the only adder of a key can be a call the census does not
@@ -382,6 +441,7 @@ export function runCensus(sources: CensusSource[], options: CensusOptions = {}):
 
     const declarations = collectKeys(sources);
     const universe = new Set(declarations.map((declaration) => declaration.key));
+    const systems = collectSystems(parsed);
     const wrappers = collectWrappers(parsed);
 
     const sites = new Map<string, UsageSite[]>();
@@ -588,6 +648,10 @@ export function runCensus(sources: CensusSource[], options: CensusOptions = {}):
         declaredNeverUsed,
         writtenNeverRead,
         keys: reports,
+        systems,
+        systemsNamedLikeKeys: systemsNamedLikeKeys(systems, declarations),
+        readOutsideCapability: readsOutsideCapability(reports, declarations),
+        oneWriterOneReader: oneWriterOneReader(reports, systems),
         unresolved,
         suspectEntityLiteralProperties: suspect,
         wrappers: [...wrappers.values()].map((wrapper) => ({

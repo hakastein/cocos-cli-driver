@@ -96,7 +96,12 @@ project's TypeScript, and `{projectPath}/temp/logs/project.log`.
 
 `ecs census`'s question — which component key a
 system reads and nothing writes — is about the project's TypeScript, which the editor does not
-answer. Its verdict is `ok` or `UNVERIFIED` only, because a census is not a write
+answer. Three further readings come off the same sweep, each standing for a rule of the playables'
+`docs/ecs.md`: a system whose name is also a key (§6), a key read from outside the folder that
+declares it (§2), and a key one system fills and one system reads (§4a.2). None of them changes the
+verdict — the renamings they argue for are the capability tickets' work, and a census that exited 1
+on the standing 20 collisions would fail on every run until the last of them lands.
+Its verdict is `ok` or `UNVERIFIED` only, because a census is not a write
 and cannot fail halfway: `UNVERIFIED` is what a sweep that did not read the whole kit answers, and a
 `--kit` narrower than `db://assets` counts as exactly that — the writer the census did not look for
 leaves a key reading as starved, and the caller having asked for the narrowing does not confirm it.
@@ -143,13 +148,13 @@ all — it is the editor UI talking to its own extension, not the CLI talking to
 | `cli/src/prefab-linkage.ts` | the `type: 'cc.Prefab'` that separates a linked instance from a flat copy, and the two-sided linkage verdict (live node vs serializer) |
 | `cli/src/asset/` | the asset database, whole: the `db://` glob and the name/limit cut a listing takes (`query.ts`), the quiescence verdict every asset command waits on — snapshot fingerprint, `settled`, the asset and component-class deltas, `AssetReport` and `copiedAddress` (`settle.ts`), and the half that asks the editor — the reads, the tree snapshot and the `settleAssetDb` poll built on them (`db.ts`) |
 | `cli/src/property/` | kind resolution (`kind.ts`), dump-value projection for read-back comparison (`readers.ts`, used by both neighbors below), the names one property answers to — the accessor and the backing field the serializer stores it under (`spelling.ts`), the writer cascade (`writers.ts`), the disk/serializer verified-write wrapper (`verified-write.ts`), the read side of a component dump — class selection, property rows, default comparison (`component-dump.ts`), uuid → scene name (`reference-index.ts`) and the spelling a reference value is written in — path, `db://` url or uuid (`reference-target.ts`) |
-| `cli/src/ecs/` | the ECS kit read off disk, no driver in either half: `census.ts` — the per-key sweep over the TypeScript parser's own syntax trees, moved from the MCP-era `source/ecs-census.ts` unchanged; `kit.ts` — the `db://assets` → directory mapping and the walk that feeds it, which follows the directory junction a shared kit is mounted into `assets/` by |
+| `cli/src/ecs/` | the ECS kit read off disk, no driver in any of the three: `census.ts` — the per-key sweep over the TypeScript parser's own syntax trees, moved from the MCP-era `source/ecs-census.ts` and since given the system list it reads off `class X extends system('name', …)`; `contracts.ts` — the three readings drawn on top of the per-key counts: a system named like a key, a key read outside the folder that declares it, and a key one system fills and one system reads; `kit.ts` — the `db://assets` → directory mapping and the walk that feeds it, which follows the directory junction a shared kit is mounted into `assets/` by |
 | `cli/src/build-task.ts` | the builder's own vocabulary, kept because the editor's typings do not carry it: `BuildExitCode` (the builder answers 36 for a build that succeeded), `BUILD_PLATFORMS`, `describeTask`, and `settingConflicts` — which overrides would overwrite a Build-panel row's saved settings; plus `BuilderStatus` and `BuildRunReport`, the two shapes `render/build.ts` prints |
 | `cli/src/log/` | `{projectPath}/temp/logs/project.log`, no driver in any of the three: `entries.ts` — entry-level parsing, where the level is read from the line's own `- <level>:` field and continuation lines fold into the entry that owns them; `search.ts` — literal-by-default line search, where a blank pattern throws and regex is opt-in; `file.ts` — the read off disk, splitting the text on CRLF as well as LF because the editor writes CRLF |
 | `cli/src/render/` | `verdict.ts` (the five head words, their exit codes and `worstVerdict`) and `present.ts` (the `Report` union and `present`) over eleven formatters — `tree.ts`, `report.ts`, `property.ts`, `prefab.ts`, `asset.ts`, `scene.ts`, `component.ts` (the class registry and a node's bone sockets, both listings), `instances.ts`, `census.ts`, `build.ts`, `log.ts`, over `columns.ts`'s `padRight`/`columnWidth`. Only `present.ts` is imported from outside `render/` |
 
 Everything a command decides that does not need a live editor lives in a pure module beside
-`commands/`: `property/`, `render/`, `ecs/census.ts`, `log/`, `build-task.ts`, `asset/query.ts`, `asset/settle.ts`, `node-type.ts`,
+`commands/`: `property/`, `render/`, `ecs/`, `log/`, `build-task.ts`, `asset/query.ts`, `asset/settle.ts`, `node-type.ts`,
 `node-snapshot.ts`, `node-transform.ts`, `node-placement.ts`, `prefab-linkage.ts`, `settle.ts`, `discovery.ts`'s
 `selectInstance`. Those and the command bodies are what the test suite covers — a command runs against
 `cli/src/driver/memory.ts`, which answers as the seam does. What drives the editor without being a

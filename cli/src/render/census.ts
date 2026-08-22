@@ -2,6 +2,7 @@ import { table } from './columns.ts';
 import type { Verdict } from './verdict.ts';
 import type { CensusResult, KeyReport, UnresolvedSite, UsageSite } from '../ecs/census.ts';
 import type { UnreadableFile } from '../ecs/kit.ts';
+import type { OutsideReader, SystemNamedLikeKey, WriterReaderPair } from '../ecs/contracts.ts';
 
 interface Finding {
     word: string;
@@ -43,6 +44,50 @@ function blindSection(title: string, sites: readonly UnresolvedSite[]): string[]
         sites.map(site => [`${site.file}:${site.line}`, site.fn, site.text, site.reason]))];
 }
 
+function section(title: string, rows: ReadonlyArray<readonly string[]>): string[] {
+    return rows.length ? [title, ...indented(rows)] : [];
+}
+
+function collisionRows(collisions: readonly SystemNamedLikeKey[]): string[][] {
+    return collisions.map(collision => [
+        collision.name, `${collision.system.file}:${collision.system.line}`, collision.system.className,
+        `${collision.key.file}:${collision.key.line}`
+    ]);
+}
+
+const FROM_WIDTH = 100;
+
+function fromList(from: readonly string[]): string {
+    const shown: string[] = [];
+    let width = 0;
+    for (const capability of from) {
+        if (shown.length && width + capability.length + 1 > FROM_WIDTH) break;
+        shown.push(capability);
+        width += capability.length + 1;
+    }
+    const hidden = from.length - shown.length;
+    return hidden ? `${shown.join(' ')} +${hidden} more` : shown.join(' ');
+}
+
+/**
+ * The counts are exact and the names are the ones that fit: `node` is read from 26 capabilities and
+ * spelling them all out puts a 600-character line in a listing that is read with grep. `--json`
+ * carries every reader and every site.
+ */
+function outsideRows(outside: readonly OutsideReader[]): string[][] {
+    return outside.map(reader => [
+        reader.key, reader.capability, `read ${reader.sites.length} from ${reader.from.length}`,
+        fromList(reader.from)
+    ]);
+}
+
+function pairRows(pairs: readonly WriterReaderPair[]): string[][] {
+    return pairs.map(pair => [
+        pair.key, `${pair.writer} writes`, `${pair.reader} reads`,
+        `${pair.writerSites[0].file}:${pair.writerSites[0].line}`
+    ]);
+}
+
 export function renderCensus(result: CensusResult, unreadable: readonly UnreadableFile[]): string {
     if (!result.keysDeclared) return 'no interface Entity is declared under this kit';
 
@@ -60,6 +105,9 @@ export function renderCensus(result: CensusResult, unreadable: readonly Unreadab
         }
     });
 
+    lines.push(...section('system named like a key', collisionRows(result.systemsNamedLikeKeys)));
+    lines.push(...section('read outside its capability', outsideRows(result.readOutsideCapability)));
+    lines.push(...section('one writer, one reader', pairRows(result.oneWriterOneReader)));
     lines.push(...blindSection('unresolved', result.unresolved));
     lines.push(...blindSection('not a declared key', result.suspectEntityLiteralProperties));
     if (result.parseErrors.length) {
@@ -94,6 +142,12 @@ export function censusSummary(result: CensusResult, root: string, narrowed: bool
             result.filesSkipped ? `files skipped: ${result.filesSkipped}` : '',
             result.parseErrors.length ? `parse errors: ${result.parseErrors.length}` : ''
         ].filter(Boolean).join('  '),
+        [
+            `systems ${result.systems.length}`,
+            `named like a key: ${result.systemsNamedLikeKeys.length}`,
+            `read outside their capability: ${result.readOutsideCapability.length}`,
+            `one writer one reader: ${result.oneWriterOneReader.length}`
+        ].join('  '),
         'structural analysis, no type checker — --json carries the limits and every site',
         narrowed ? 'the sweep was narrowed to --kit: a writer outside it is not counted' : ''
     ].filter(Boolean).join('\n');
