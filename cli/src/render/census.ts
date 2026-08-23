@@ -40,8 +40,10 @@ function indented(rows: ReadonlyArray<readonly string[]>): string[] {
 
 function blindSection(title: string, sites: readonly UnresolvedSite[]): string[] {
     if (!sites.length) return [];
-    return [title, ...indented(
-        sites.map(site => [`${site.file}:${site.line}`, site.fn, site.text, site.reason]))];
+    return [title, ...indented(sites.map(site => [
+        `${site.file}:${site.line}`, site.fn, site.text, site.reason,
+        site.keys?.length ? `keys: ${site.keys.join(' ')}` : ''
+    ]))];
 }
 
 function section(title: string, rows: ReadonlyArray<readonly string[]>): string[] {

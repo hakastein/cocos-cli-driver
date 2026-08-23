@@ -55,7 +55,7 @@ test('where the parser saw a key argument and could not name it is printed, not 
     ]);
     const text = renderCensus(blind, []);
     assert.match(text, /^unresolved$/m);
-    assert.match(text, /^ {2}copy\.ts:1 {2}copy {2}.*not a literal/m);
+    assert.match(text, /^ {2}copy\.ts:1 {2}copy {2}.*the caller chose/m);
 });
 
 test('a property in an entity literal that no Entity declares is named', () => {

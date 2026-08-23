@@ -134,6 +134,18 @@ _Avoid_: audit, scan, analysis, report.
 The name an ECS component is carried under on an entity, and the unit a census reports on.
 _Avoid_: component name, field, tag.
 
+**Receiver**:
+What sits to the left of the dot at a usage site. A census counts `X.velocity` as the `velocity`
+component only while the receiver is an entity; a local the sweep placed as a class instance carries
+a field of that class, and is not counted.
+_Avoid_: object, target, owner, left-hand side.
+
+**Contributor**:
+A function or method whose returned object literal names component keys — what a spread at assembly
+puts on the entity. Its declared return type does not answer which, being `Partial<Entity>` on every
+one of them; the literal it returns does.
+_Avoid_: factory, builder, provider, reader.
+
 **Read without a writer**:
 A component key that some system reads and nothing anywhere writes or adds — a feature that silently
 never runs, which neither a unit test nor the type checker sees.

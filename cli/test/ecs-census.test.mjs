@@ -119,7 +119,7 @@ test('a key argument the parser cannot name is reported, not guessed', () => {
         { path: 'assembly.ts', text: `function copy(key: keyof Entity) { world.addComponent(target, key, source[key]); }\n` },
     ]);
     assert.equal(result.unresolved.length, 1);
-    assert.match(result.unresolved[0].reason, /not a literal/);
+    assert.match(result.unresolved[0].reason, /the caller chose/);
 });
 
 test('a key written but never read is reported apart from the flagged list', () => {
@@ -129,4 +129,149 @@ test('a key written but never read is reported apart from the flagged list', () 
     ]);
     assert.deepEqual(flagged(result), []);
     assert.deepEqual(result.writtenNeverRead.map((report) => report.key), ['wavesReported']);
+});
+
+test('a spread of read() lands its keys on the assembly that spreads it', () => {
+    const result = runCensus([
+        declaring('occupiable', 'node'),
+        {
+            path: 'occupation/Occupiable.ts',
+            text: `import { Component } from 'cc';\n`
+                + `export class Occupiable extends Component {\n`
+                + `    read(): Partial<Entity> { return { occupiable: { radius: this.radius } }; }\n`
+                + `}\n`,
+        },
+        {
+            path: 'assembly/scene.ts',
+            text: `function seed(scene: Scene) {\n`
+                + `    for (const spot of scene.getComponentsInChildren(Occupiable)) {\n`
+                + `        const parts: Entity = { node: spot.node, ...spot.read() };\n`
+                + `    }\n`
+                + `}\n`,
+        },
+    ]);
+    const occupiable = result.keys.find((report) => report.key === 'occupiable');
+    assert.deepEqual(occupiable.adders.map((site) => `${site.file}:${site.line}`).sort(),
+        ['assembly/scene.ts:3', 'occupation/Occupiable.ts:3']);
+    assert.deepEqual(result.unresolved, []);
+});
+
+test('an entity literal handed to a function typed Entity counts, wherever the literal sits', () => {
+    const result = runCensus([
+        declaring('goalArrow', 'node'),
+        {
+            path: 'assembly/transcribe.ts',
+            text: `export function lay(world: GameWorld, node: Node, parts: Entity): Entity { return world.add(parts); }\n`,
+        },
+        {
+            path: 'assembly/scene.ts',
+            text: `const q = world.with('goalArrow');\n`
+                + `function seed(node: Node) { lay(world, node, { node, goalArrow: { tint: 1 } }); }\n`,
+        },
+    ]);
+    const arrow = result.keys.find((report) => report.key === 'goalArrow');
+    assert.equal(arrow.counts.adders, 1);
+    assert.deepEqual(flagged(result), []);
+});
+
+test('a write through a local alias counts as a writer', () => {
+    const result = runCensus([
+        declaring('velocity'),
+        {
+            path: 'locomotion/move.ts',
+            text: `const q = world.with('velocity');\n`
+                + `function move(body: With<Entity, 'velocity'>) {\n`
+                + `    const measured = body.velocity;\n`
+                + `    measured.x = 1;\n`
+                + `}\n`,
+        },
+    ]);
+    const velocity = result.keys[0];
+    assert.equal(velocity.counts.writers, 1);
+    assert.equal(velocity.writers[0].kind, 'fieldWrite');
+    assert.equal(velocity.writers[0].line, 4);
+    assert.deepEqual(flagged(result), []);
+});
+
+test('an alias of a field one hop inside a component still writes that component', () => {
+    const result = runCensus([
+        declaring('intent'),
+        {
+            path: 'locomotion/move.ts',
+            text: `const q = world.with('intent');\n`
+                + `function move(body: Entity) {\n`
+                + `    const heading = body.intent.vel;\n`
+                + `    heading.x = 1;\n`
+                + `}\n`,
+        },
+    ]);
+    assert.equal(result.keys[0].counts.writers, 1);
+    assert.equal(result.keys[0].counts.readers, 2, 'the query, and the binding that still reads the slot');
+});
+
+test('a field of an engine component is not a component key of the same name', () => {
+    const result = runCensus([
+        declaring('node', 'target'),
+        {
+            path: 'assembly/InstrumentSlot.ts',
+            text: `import { Component } from 'cc';\nexport class InstrumentSlot extends Component { mount = null; }\n`,
+        },
+        {
+            path: 'present/camera/CameraRig.ts',
+            text: `import { Component } from 'cc';\nexport class CameraRig extends Component { target = null; }\n`,
+        },
+        {
+            path: 'assembly/provision.ts',
+            text: `const q = world.with('node');\n`
+                + `function provision(scene: Scene, services: Services) {\n`
+                + `    for (const slot of scene.getComponentsInChildren(InstrumentSlot)) slot.node.active = true;\n`
+                + `    const rig = services.get(CameraRig);\n`
+                + `    if (rig && !rig.target) rig.target = heroNode;\n`
+                + `}\n`,
+        },
+    ]);
+    const node = result.keys.find((report) => report.key === 'node');
+    const target = result.keys.find((report) => report.key === 'target');
+    assert.equal(node.counts.readers, 1, 'only the query reads it');
+    assert.equal(target.counts.readers, 0);
+    assert.equal(target.counts.writers, 0);
+});
+
+test('a parameter typed with an engine component shields its fields too', () => {
+    const result = runCensus([
+        declaring('body'),
+        {
+            path: 'projectile/Emitter.ts',
+            text: `import { Component } from 'cc';\nexport class Emitter extends Component { body = null; }\n`,
+        },
+        {
+            path: 'assembly/provision.ts',
+            text: `const q = world.with('body');\n`
+                + `function openBodyPool(emitter: Emitter) { if (!emitter.body) return; }\n`,
+        },
+    ]);
+    assert.equal(result.keys[0].counts.readers, 1, 'only the query reads it');
+});
+
+test('a spread the sweep cannot follow names the keys such a call could lay', () => {
+    const result = runCensus([
+        declaring('occupiable', 'node'),
+        {
+            path: 'occupation/Occupiable.ts',
+            text: `import { Component } from 'cc';\n`
+                + `export class Occupiable extends Component {\n`
+                + `    read(): Partial<Entity> { return { occupiable: true }; }\n`
+                + `}\n`,
+        },
+        {
+            path: 'assembly/authoring.ts',
+            text: `function readNode(node: Node): Entity {\n`
+                + `    const entity: Entity = { node, ...pick(node).read() };\n`
+                + `    return entity;\n`
+                + `}\n`,
+        },
+    ]);
+    assert.equal(result.unresolved.length, 1);
+    assert.deepEqual(result.unresolved[0].keys, ['occupiable']);
+    assert.match(result.unresolved[0].reason, /read\(\)/);
 });

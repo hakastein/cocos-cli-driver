@@ -15,6 +15,10 @@
 import * as ts from 'typescript';
 import { oneWriterOneReader, readsOutsideCapability, systemsNamedLikeKeys } from './contracts.ts';
 import type { OutsideReader, SystemNamedLikeKey, WriterReaderPair } from './contracts.ts';
+import { collectBindings, collectClassNames, receiverShape, scopeRange } from './receivers.ts';
+import type { BindingTable, ParsedSource } from './receivers.ts';
+import { collectContributors, resolveContribution } from './contributions.ts';
+import type { ContributionScope } from './contributions.ts';
 
 export interface CensusSource {
     /** Path as it should appear in the report — the caller decides whether it is absolute or relative. */
@@ -83,6 +87,8 @@ export interface UnresolvedSite {
     fn: string;
     text: string;
     reason: string;
+    /** The union of what every kit method of that name returns; the site lays some subset of it. */
+    keys?: string[];
 }
 
 export interface CensusResult {
@@ -136,11 +142,12 @@ const CALL_EFFECTS = new Map<string, { keyArgs: number[] | 'all'; kind: UsageKin
 const ENTITY_LITERAL_CALLS = new Set(['add', 'spawn']);
 
 const LIMITS: string[] = [
-    'Structural analysis only: no type checker runs, so a key is recognised by its name, not by proof that the receiver is an Entity.',
+    'Structural analysis only: no type checker runs, so a key is recognised by its name, and a receiver is placed by its own declaration rather than by its type.',
     'Accesses on `this` are skipped — `this.node` in a cc.Component is the engine node, not the `node` component. An EC class that stored a component on itself is therefore invisible.',
-    'A local holding a component reads as an entity: `bullet.damage` on a Projectile counts as a read of the `damage` component. Nesting is caught (`entity.contact.damage` is not), a bare local is not.',
-    'A component key handed around as a value (a variable, a computed key, a spread) is reported under `unresolved` instead of being guessed.',
-    'A wrapper is matched by function name across the whole scanned set; two same-named local functions are treated as one.',
+    'A receiver is not an entity when it was bound from `getComponent…()`, from a container `get(Class)`, or annotated with a class name. A local whose declaration says none of those reads as an entity, so `bullet.damage` on an untyped Projectile still counts as a read of `damage`.',
+    'A `const` bound to a component or to one of its fields carries writes through: `const v = body.velocity; v.x = 1` writes `velocity`. Reads are not carried, the binding itself having counted as one. A `let`, a destructuring, or a binding handed to another function carries nothing.',
+    'A spread and an entity-typed argument are expanded from the object literal the named method returns. A dispatch over a class the sweep cannot name goes to `unresolved` carrying the keys any method of that name returns, and a computed key goes there too, rather than being guessed.',
+    'A wrapper, a contributor and an entity-typed parameter are matched by function name across the whole scanned set; two same-named local functions are treated as one.',
     'Despawn removes every component at once and is not counted as a per-key remover.',
     'A method call that mutates a component in place (`entity.key.list.push(x)`) reads as a read, not a write.',
     'A system is recognised by `class X extends system(\'name\', …)`; one declared any other way is absent from the systems list and its name is never checked against the keys.',
@@ -244,6 +251,100 @@ interface WrapperInfo {
     parameter: string;
     parameterIndex: number;
     effects: Set<UsageKind>;
+}
+
+interface ScopedName<T> {
+    name: string;
+    start: number;
+    end: number;
+    value: T;
+}
+
+function innermost<T>(scoped: readonly ScopedName<T>[], name: string, position: number): T | undefined {
+    let best: ScopedName<T> | undefined;
+    for (const entry of scoped) {
+        if (entry.name !== name || position < entry.start || position > entry.end) continue;
+        if (!best || entry.end - entry.start < best.end - best.start) best = entry;
+    }
+    return best?.value;
+}
+
+/** `const measured = body.velocity` — the component the local stands for, and how deep inside it. */
+function keyAccessIn(
+    expression: ts.Expression,
+    universe: ReadonlySet<string>,
+    onAnEntity: (access: ts.PropertyAccessExpression) => boolean
+): { key: string; depth: number } | null {
+    let current = stripWrappers(expression);
+    let depth = 0;
+    while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+        if (ts.isPropertyAccessExpression(current) && universe.has(current.name.text) && onAnEntity(current)) {
+            return { key: current.name.text, depth };
+        }
+        current = stripWrappers(current.expression);
+        depth += 1;
+    }
+    return null;
+}
+
+function collectAliases(
+    sourceFile: ts.SourceFile,
+    universe: ReadonlySet<string>,
+    onAnEntity: (access: ts.PropertyAccessExpression) => boolean
+): ScopedName<{ key: string; depth: number }>[] {
+    const aliases: ScopedName<{ key: string; depth: number }>[] = [];
+    const visit = (node: ts.Node): void => {
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+            && node.parent && ts.isVariableDeclarationList(node.parent)
+            && (node.parent.flags & ts.NodeFlags.Const) !== 0) {
+            const held = keyAccessIn(node.initializer, universe, onAnEntity);
+            if (held) aliases.push({ name: node.name.text, value: held, ...scopeRange(node) });
+        }
+        ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sourceFile, visit);
+    return aliases;
+}
+
+const KEYOF_ENTITY = /keyof\s+Entity/;
+
+/**
+ * A local standing for a key the caller chose: `claim`'s `key: K`, `lay`'s `Object.keys(parts) as
+ * (keyof Entity)[]`. Which keys it ranges over is decided at the call site and counted there.
+ */
+function collectKeyLocals(sourceFile: ts.SourceFile): ScopedName<true>[] {
+    const locals: ScopedName<true>[] = [];
+    const constrained = (declaration: ts.SignatureDeclaration): Set<string> => {
+        const names = new Set<string>();
+        for (const parameter of declaration.typeParameters ?? []) {
+            if (parameter.constraint && KEYOF_ENTITY.test(parameter.constraint.getText(sourceFile))) {
+                names.add(parameter.name.text);
+            }
+        }
+        return names;
+    };
+    const visit = (node: ts.Node): void => {
+        if (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)
+            || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+            const generics = constrained(node);
+            for (const parameter of node.parameters) {
+                if (!parameter.type || !ts.isIdentifier(parameter.name)) continue;
+                const text = parameter.type.getText(sourceFile);
+                if (!KEYOF_ENTITY.test(text) && !generics.has(text)) continue;
+                locals.push({ name: parameter.name.text, value: true, ...scopeRange(parameter) });
+            }
+        }
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+            const source = node.type ?? (node.parent && ts.isVariableDeclarationList(node.parent)
+                && node.parent.parent && ts.isForOfStatement(node.parent.parent)
+                ? node.parent.parent.expression : undefined);
+            const text = source === undefined ? '' : source.getText(sourceFile);
+            if (KEYOF_ENTITY.test(text)) locals.push({ name: node.name.text, value: true, ...scopeRange(node) });
+        }
+        ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sourceFile, visit);
+    return locals;
 }
 
 /** `const STRIPPED_ON_DEATH = ['seeking', 'attacking'] as const` — module-level key lists, by name. */
@@ -444,6 +545,12 @@ export function runCensus(sources: CensusSource[], options: CensusOptions = {}):
     const systems = collectSystems(parsed);
     const wrappers = collectWrappers(parsed);
 
+    const parsedSources: ParsedSource[] = parsed.map(({ source, sourceFile }) => ({ path: source.path, sourceFile }));
+    const componentClasses = collectClassNames(parsedSources);
+    const tables = new Map<string, BindingTable>();
+    for (const entry of parsedSources) tables.set(entry.path, collectBindings(entry.sourceFile, componentClasses));
+    const contributors = collectContributors(parsedSources, universe, componentClasses, tables);
+
     const sites = new Map<string, UsageSite[]>();
     for (const key of universe) sites.set(key, []);
     const unresolved: UnresolvedSite[] = [];
@@ -463,6 +570,19 @@ export function runCensus(sources: CensusSource[], options: CensusOptions = {}):
 
     for (const { source, sourceFile } of parsed) {
         const keyArrays = collectKeyArrays(sourceFile);
+        const table = tables.get(source.path)!;
+        const scope: ContributionScope = { index: contributors, table, classes: componentClasses };
+
+        const onAnEntity = (access: ts.PropertyAccessExpression): boolean => {
+            const receiver = stripWrappers(access.expression);
+            if (receiver.kind === ts.SyntaxKind.ThisKeyword || receiver.kind === ts.SyntaxKind.SuperKeyword) return false;
+            const tail = receiverTailName(access.expression);
+            if (tail !== null && universe.has(tail)) return false;
+            return receiverShape(access.expression, table, componentClasses) === undefined;
+        };
+
+        const aliases = collectAliases(sourceFile, universe, onAnEntity);
+        const keyLocals = collectKeyLocals(sourceFile);
 
         /** A key argument as written: a literal, or a named list of literals, or nothing we can name. */
         const resolveKeyArgument = (argument: ts.Expression): { keys: string[]; unresolvedReason: string | null } => {
@@ -480,26 +600,32 @@ export function runCensus(sources: CensusSource[], options: CensusOptions = {}):
             return { keys: [], unresolvedReason: 'key argument is not a literal or a local list of literals' };
         };
 
+        const recordUsage = (key: string, at: ts.Node, outcome: ChainOutcome, depth: number): void => {
+            let kind: UsageKind;
+            if (outcome.deleted && depth === 0) kind = 'remove';
+            else if (outcome.assigned) kind = depth === 0 ? 'set' : 'fieldWrite';
+            else if (outcome.deleted) kind = 'fieldWrite';
+            else kind = 'read';
+            record(key, {
+                file: source.path,
+                line: lineOf(sourceFile, at),
+                kind,
+                fn: enclosingName(at),
+                text: truncate(at.getText(sourceFile)),
+            });
+        };
+
         const visit = (node: ts.Node): void => {
-            if (ts.isPropertyAccessExpression(node) && universe.has(node.name.text)) {
-                const receiver = stripWrappers(node.expression);
-                const isThis = receiver.kind === ts.SyntaxKind.ThisKeyword || receiver.kind === ts.SyntaxKind.SuperKeyword;
-                const tail = receiverTailName(node.expression);
-                const receiverIsComponent = tail !== null && universe.has(tail);
-                if (!isThis && !receiverIsComponent) {
-                    const outcome = chainOutcome(node);
-                    let kind: UsageKind;
-                    if (outcome.deleted && outcome.depth === 0) kind = 'remove';
-                    else if (outcome.assigned) kind = outcome.depth === 0 ? 'set' : 'fieldWrite';
-                    else if (outcome.deleted) kind = 'fieldWrite';
-                    else kind = 'read';
-                    record(node.name.text, {
-                        file: source.path,
-                        line: lineOf(sourceFile, node),
-                        kind,
-                        fn: enclosingName(node),
-                        text: truncate(node.getText(sourceFile)),
-                    });
+            if (ts.isPropertyAccessExpression(node) && universe.has(node.name.text) && onAnEntity(node)) {
+                const outcome = chainOutcome(node);
+                recordUsage(node.name.text, node, outcome, outcome.depth);
+            }
+
+            if (ts.isIdentifier(node)) {
+                const alias = innermost(aliases, node.text, node.getStart(sourceFile));
+                const outcome = alias ? chainOutcome(node) : null;
+                if (alias && outcome && (outcome.assigned || outcome.deleted)) {
+                    recordUsage(alias.key, node, outcome, alias.depth + outcome.depth);
                 }
             }
 
@@ -513,13 +639,19 @@ export function runCensus(sources: CensusSource[], options: CensusOptions = {}):
                     if (!argument) return;
                     const resolved = resolveKeyArgument(argument);
                     if (resolved.unresolvedReason) {
-                        if (ts.isStringLiteralLike(argument) || ts.isIdentifier(stripWrappers(argument)) || ts.isElementAccessExpression(stripWrappers(argument))) {
+                        const named = stripWrappers(argument);
+                        const forwarded = ts.isIdentifier(named)
+                            && innermost(keyLocals, named.text, named.getStart(sourceFile)) === true;
+                        if (ts.isStringLiteralLike(argument) || ts.isIdentifier(named) || ts.isElementAccessExpression(named)) {
                             unresolved.push({
                                 file: source.path,
                                 line: lineOf(sourceFile, node),
                                 fn: enclosingName(node),
                                 text: truncate(node.getText(sourceFile)),
-                                reason: resolved.unresolvedReason,
+                                reason: forwarded
+                                    ? `"${named.text}" is a key the caller chose — counted at the call sites`
+                                    : resolved.unresolvedReason,
+                                keys: [],
                             });
                         }
                         return;
@@ -550,6 +682,10 @@ export function runCensus(sources: CensusSource[], options: CensusOptions = {}):
                     const argument = stripWrappers(node.arguments[0]);
                     if (ts.isObjectLiteralExpression(argument)) recordEntityLiteral(argument);
                 }
+                for (const index of (name ? contributors.entityParameters(name) : undefined) ?? []) {
+                    const argument = node.arguments[index];
+                    if (argument) takeContribution(argument, argument, false);
+                }
             }
 
             if (ts.isObjectLiteralExpression(node) && isEntityTypedPosition(node, sourceFile)) recordEntityLiteral(node);
@@ -571,16 +707,50 @@ export function runCensus(sources: CensusSource[], options: CensusOptions = {}):
             ts.forEachChild(node, visit);
         };
 
+        const spreadMethodName = (expression: ts.Expression): string | null => {
+            const target = stripWrappers(expression);
+            if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) {
+                return spreadMethodName(target.left);
+            }
+            if (!ts.isCallExpression(target)) return null;
+            return calleeName(target);
+        };
+
+        const takeContribution = (expression: ts.Expression, at: ts.Node, spread: boolean): void => {
+            const target = stripWrappers(expression);
+            if (ts.isObjectLiteralExpression(target)) { recordEntityLiteral(target); return; }
+            const contribution = resolveContribution(expression, universe, scope);
+            for (const key of contribution?.keys ?? []) {
+                record(key, {
+                    file: source.path,
+                    line: lineOf(sourceFile, at),
+                    kind: 'add',
+                    fn: enclosingName(at),
+                    text: truncate(at.getText(sourceFile)),
+                });
+            }
+            if (contribution && !contribution.partial) return;
+            const method = spreadMethodName(expression);
+            if (!contribution && method === null) return;
+            const known = method ? contributors.keysOfMethod(method) : { keys: [], owners: 0 };
+            if (!spread && known.owners === 0) return;
+            unresolved.push({
+                file: source.path,
+                line: lineOf(sourceFile, at),
+                fn: enclosingName(at),
+                text: truncate(at.getText(sourceFile)),
+                reason: method === null
+                    ? 'entity parts from an expression the sweep cannot follow'
+                    : `${method}() dispatches over a class the sweep cannot name; `
+                        + `${known.owners} in the kit answer it`,
+                keys: known.keys,
+            });
+        };
+
         const recordEntityLiteral = (literal: ts.ObjectLiteralExpression): void => {
             for (const property of literal.properties) {
                 if (ts.isSpreadAssignment(property)) {
-                    unresolved.push({
-                        file: source.path,
-                        line: lineOf(sourceFile, property),
-                        fn: enclosingName(property),
-                        text: truncate(property.getText(sourceFile)),
-                        reason: 'spread into an entity literal — its keys are not visible here',
-                    });
+                    takeContribution(property.expression, property, true);
                     continue;
                 }
                 const name = property.name;
