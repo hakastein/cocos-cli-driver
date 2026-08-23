@@ -15,7 +15,7 @@
 import * as ts from 'typescript';
 import { oneWriterOneReader, readsOutsideCapability, systemsNamedLikeKeys } from './contracts.ts';
 import type { OutsideReader, SystemNamedLikeKey, WriterReaderPair } from './contracts.ts';
-import { collectBindings, collectClassNames, receiverShape, scopeRange } from './receivers.ts';
+import { boundNames, collectBindings, collectClassNames, receiverShape, scopeRange } from './receivers.ts';
 import type { BindingTable, ParsedSource } from './receivers.ts';
 import { collectContributors, resolveContribution } from './contributions.ts';
 import type { ContributionScope } from './contributions.ts';
@@ -287,18 +287,25 @@ function keyAccessIn(
     return null;
 }
 
+type Alias = { key: string; depth: number } | null;
+
 function collectAliases(
     sourceFile: ts.SourceFile,
     universe: ReadonlySet<string>,
     onAnEntity: (access: ts.PropertyAccessExpression) => boolean
-): ScopedName<{ key: string; depth: number }>[] {
-    const aliases: ScopedName<{ key: string; depth: number }>[] = [];
+): ScopedName<Alias>[] {
+    const aliases: ScopedName<Alias>[] = [];
     const visit = (node: ts.Node): void => {
-        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
-            && node.parent && ts.isVariableDeclarationList(node.parent)
-            && (node.parent.flags & ts.NodeFlags.Const) !== 0) {
-            const held = keyAccessIn(node.initializer, universe, onAnEntity);
-            if (held) aliases.push({ name: node.name.text, value: held, ...scopeRange(node) });
+        if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
+            const constant = ts.isVariableDeclaration(node) && node.parent
+                && ts.isVariableDeclarationList(node.parent)
+                && (node.parent.flags & ts.NodeFlags.Const) !== 0;
+            const initializer = ts.isVariableDeclaration(node) ? node.initializer : undefined;
+            const held = constant && initializer && ts.isIdentifier(node.name)
+                ? keyAccessIn(initializer, universe, onAnEntity)
+                : null;
+            const range = scopeRange(node);
+            for (const bound of boundNames(node.name)) aliases.push({ name: bound.text, value: held, ...range });
         }
         ts.forEachChild(node, visit);
     };

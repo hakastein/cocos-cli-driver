@@ -99,10 +99,22 @@ export function componentLookup(call: ts.CallExpression, classes: ReadonlySet<st
     return undefined;
 }
 
-interface Binding extends ReceiverShape {
+interface Binding {
     name: string;
     start: number;
     end: number;
+    /** null where the name is re-declared to something else, so an outer binding stops applying. */
+    shape: ReceiverShape | null;
+}
+
+export function boundNames(name: ts.BindingName): ts.Identifier[] {
+    if (ts.isIdentifier(name)) return [name];
+    const found: ts.Identifier[] = [];
+    for (const element of name.elements) {
+        if (ts.isOmittedExpression(element)) continue;
+        found.push(...boundNames(element.name));
+    }
+    return found;
 }
 
 export function scopeRange(declaration: ts.Node): { start: number; end: number } {
@@ -127,10 +139,11 @@ export function scopeRange(declaration: ts.Node): { start: number; end: number }
 export function collectBindings(sourceFile: ts.SourceFile, classes: ReadonlySet<string>): BindingTable {
     const bindings: Binding[] = [];
 
-    const bind = (name: ts.BindingName, shape: ReceiverShape, declaration: ts.Node): void => {
-        if (!ts.isIdentifier(name)) return;
+    const bind = (name: ts.BindingName, shape: ReceiverShape | undefined, declaration: ts.Node): void => {
         const range = scopeRange(declaration);
-        bindings.push({ name: name.text, className: shape.className, ...range });
+        for (const bound of boundNames(name)) {
+            bindings.push({ name: bound.text, shape: ts.isIdentifier(name) ? shape ?? null : null, ...range });
+        }
     };
 
     const shapeOfInitializer = (initializer: ts.Expression): ReceiverShape | undefined => {
@@ -156,23 +169,19 @@ export function collectBindings(sourceFile: ts.SourceFile, classes: ReadonlySet<
         return { className: alternatives[0] };
     };
 
+    const iteratedShape = (node: ts.VariableDeclaration): ReceiverShape | undefined => {
+        const list = node.parent;
+        if (!list || !ts.isVariableDeclarationList(list) || !list.parent) return undefined;
+        return ts.isForOfStatement(list.parent) ? shapeOfInitializer(list.parent.expression) : undefined;
+    };
+
     const visit = (node: ts.Node): void => {
         if (ts.isVariableDeclaration(node)) {
-            const annotated = shapeOfType(node.type);
-            if (annotated) bind(node.name, annotated, node);
-            else if (node.initializer) {
-                const shape = shapeOfInitializer(node.initializer);
-                if (shape) bind(node.name, shape, node);
-            } else if (node.parent && ts.isVariableDeclarationList(node.parent) && node.parent.parent
-                && (ts.isForOfStatement(node.parent.parent))) {
-                const shape = shapeOfInitializer(node.parent.parent.expression);
-                if (shape) bind(node.name, shape, node);
-            }
+            const shape = shapeOfType(node.type)
+                ?? (node.initializer ? shapeOfInitializer(node.initializer) : iteratedShape(node));
+            bind(node.name, shape, node);
         }
-        if (ts.isParameter(node)) {
-            const shape = shapeOfType(node.type);
-            if (shape) bind(node.name, shape, node);
-        }
+        if (ts.isParameter(node)) bind(node.name, shapeOfType(node.type), node);
         ts.forEachChild(node, visit);
     };
     ts.forEachChild(sourceFile, visit);
@@ -184,7 +193,7 @@ export function collectBindings(sourceFile: ts.SourceFile, classes: ReadonlySet<
                 if (binding.name !== name || position < binding.start || position > binding.end) continue;
                 if (!best || binding.end - binding.start < best.end - best.start) best = binding;
             }
-            return best ? { className: best.className } : undefined;
+            return best?.shape ?? undefined;
         },
     };
 }

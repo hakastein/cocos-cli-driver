@@ -275,3 +275,42 @@ test('a spread the sweep cannot follow names the keys such a call could lay', ()
     assert.deepEqual(result.unresolved[0].keys, ['occupiable']);
     assert.match(result.unresolved[0].reason, /read\(\)/);
 });
+
+test('a name re-declared in an inner block stops carrying the alias', () => {
+    const result = runCensus([
+        declaring('velocity'),
+        {
+            path: 'locomotion/move.ts',
+            text: `const q = world.with('velocity');\n`
+                + `function move(body: Entity) {\n`
+                + `    const measured = body.velocity;\n`
+                + `    {\n`
+                + `        let measured = 0;\n`
+                + `        measured = 1;\n`
+                + `    }\n`
+                + `}\n`,
+        },
+    ]);
+    assert.equal(result.keys[0].counts.writers, 0);
+    assert.equal(result.keys[0].counts.readers, 2);
+});
+
+test('a name re-declared in an inner block stops standing for the engine component', () => {
+    const result = runCensus([
+        declaring('node'),
+        {
+            path: 'assembly/InstrumentSlot.ts',
+            text: `import { Component } from 'cc';\nexport class InstrumentSlot extends Component { mount = null; }\n`,
+        },
+        {
+            path: 'assembly/provision.ts',
+            text: `function provision(scene: Scene) {\n`
+                + `    for (const slot of scene.getComponentsInChildren(InstrumentSlot)) {\n`
+                + `        const slot = world.entityOf(scene);\n`
+                + `        use(slot.node);\n`
+                + `    }\n`
+                + `}\n`,
+        },
+    ]);
+    assert.equal(result.keys[0].counts.readers, 1);
+});
