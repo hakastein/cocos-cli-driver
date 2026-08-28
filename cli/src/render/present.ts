@@ -10,7 +10,6 @@ import {
 import {
     buildRunSummary, buildVerdict, builderStatusSummary, renderBuildRun, renderBuilderStatus
 } from './build.ts';
-import { censusSummary, censusVerdict, renderCensus } from './census.ts';
 import { logSearchSummary, logTailSummary, renderLogEntries, renderLogMatches } from './log.ts';
 import { classListSummary, renderClassList, renderSockets, socketsSummary } from './component.ts';
 import { renderWrites, undoDetail, writesVerdict } from './report.ts';
@@ -32,8 +31,6 @@ import type { BuildRunReport, BuilderStatus } from '../build-task.ts';
 import type { LogWindow, ProjectLogEntry } from '../log/entries.ts';
 import type { LogFileInfo } from '../log/file.ts';
 import type { LogSearchResult } from '../log/search.ts';
-import type { CensusResult } from '../ecs/census.ts';
-import type { UnreadableFile } from '../ecs/kit.ts';
 import type { ComponentChoice, PropertyReading } from '../property/component-dump.ts';
 import type { ReferenceLabel } from '../property/reference-index.ts';
 
@@ -98,12 +95,7 @@ export type Report =
         kind: 'logTail'; file: LogFileInfo; window: LogWindow; entries: ProjectLogEntry[];
         detail: boolean;
     }
-    | { kind: 'logSearch'; file: LogFileInfo; window: LogWindow; result: LogSearchResult }
-    /** The ECS kit read off disk: what reads each component key, and what writes it. */
-    | {
-        kind: 'census'; root: string; result: CensusResult; narrowed: boolean;
-        unreadable: UnreadableFile[];
-    };
+    | { kind: 'logSearch'; file: LogFileInfo; window: LogWindow; result: LogSearchResult };
 
 interface Rendered {
     verdict: Verdict;
@@ -323,14 +315,6 @@ function render(report: Report): Rendered {
                 text: renderLogMatches(report.result),
                 json: { file: report.file, window: report.window, ...report.result },
                 note: logSearchSummary(report.file, report.window, report.result)
-            };
-
-        case 'census':
-            return {
-                verdict: censusVerdict(report.result, report.narrowed),
-                text: renderCensus(report.result, report.unreadable),
-                json: { root: report.root, ...report.result, unreadable: report.unreadable },
-                note: censusSummary(report.result, report.root, report.narrowed)
             };
     }
 }

@@ -8,7 +8,6 @@ import { registerNode } from './commands/node.ts';
 import { registerComponent } from './commands/component.ts';
 import { registerPrefab } from './commands/prefab.ts';
 import { registerAsset } from './commands/asset.ts';
-import { registerEcs } from './commands/ecs.ts';
 import { registerBuild } from './commands/build.ts';
 import { registerLog } from './commands/log.ts';
 import { EXIT } from './exit.ts';
@@ -35,7 +34,6 @@ export function buildProgram(): Command {
     registerComponent(program, () => resolveClient(program.opts().project));
     registerPrefab(program, () => resolveClient(program.opts().project));
     registerAsset(program, () => resolveClient(program.opts().project));
-    registerEcs(program, () => resolveProject(program.opts().project));
     registerBuild(program, () => resolveClient(program.opts().project));
     registerLog(program, () => resolveProject(program.opts().project));
 
