@@ -34,9 +34,11 @@ export class MemoryDriver implements Driver {
     private readonly refuses: MemoryRefusals;
     /** Property overrides the editor recorded, keyed by the uuid of the instance root holding them. */
     private readonly overrides = new Map<string, PrefabOverrideRecord[]>();
+    private currentScene: string;
 
     constructor(spec?: MemoryScene) {
         this.spec = spec || null;
+        this.currentScene = (spec && spec.uuid) || 'scene-uuid';
         this.assets = new MemoryAssetDb((spec && spec.assets) || {});
         this.builder = (spec && spec.builder) || {};
         this.refuses = (spec && spec.refuses) || {};
@@ -342,7 +344,10 @@ export class MemoryDriver implements Driver {
                     };
                     forget(node);
                 },
-                openScene: async () => undefined,
+                openScene: async uuid => {
+                    const opens = (this.spec && this.spec.opensAs) || {};
+                    this.currentScene = opens[uuid] || uuid;
+                },
                 saveScene: async () => undefined,
                 beginRecording: async () => {
                     if (this.refuses.beginRecording) throw new Error(this.refuses.beginRecording);
@@ -516,7 +521,7 @@ export class MemoryDriver implements Driver {
 
     /** A root node's parent is the scene itself, which the dump names by uuid like any other. */
     private sceneUuid(): string {
-        return (this.spec && this.spec.uuid) || 'scene-uuid';
+        return this.currentScene;
     }
 
     private sceneHeader(): { sceneName: string; nodeCount: number } {
@@ -545,6 +550,9 @@ export class MemoryDriver implements Driver {
     }
 
     private sceneInfo(): SceneResult<SceneInfo> {
+        if (this.refuses.getCurrentSceneInfo) {
+            return { success: false, error: this.refuses.getCurrentSceneInfo };
+        }
         const header = this.sceneHeader();
         return {
             success: true,
@@ -1178,9 +1186,10 @@ export interface MemoryNode {
     sockets?: MemorySocket[];
 }
 
-/** Editor messages that refuse, each carrying the refusal it answers with. */
+/** Calls that refuse, each carrying the refusal it answers with. */
 export interface MemoryRefusals {
     setProperty?: string;
+    getCurrentSceneInfo?: string;
     queryTasksInfo?: string;
     beginRecording?: string;
     endRecording?: string;
@@ -1210,6 +1219,11 @@ export interface MemoryScene {
     nodes?: MemoryNode[];
     /** `db://` url → uuid, the asset database's whole contents. */
     assets?: Record<string, string>;
+    /**
+     * Scene asset uuid → the scene the editor is left on after being told to open it. An address
+     * the editor cannot load leaves a fresh, never-saved scene and no error.
+     */
+    opensAs?: Record<string, string>;
     /** The class names the engine registers; a scene naming none registers every spelling. */
     classes?: string[];
     /**

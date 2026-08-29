@@ -103,12 +103,60 @@ test('without --root the scene is scanned whole, with no rootUuid invented for i
     assert.deepEqual(driver.calls.find(call => call.name === 'dumpMissingScripts').args[0], {});
 });
 
-test('open tells the editor the address it was given and names it back', async () => {
-    const driver = new MemoryDriver({ nodes: [] });
+const SCENE_ON_DISK = {
+    name: 'main',
+    uuid: '0ba73f57-eedc-484a-89e4-20aeef0b73fc',
+    nodes: [{ name: 'Canvas' }],
+    assets: { 'db://assets/main.scene': '0ba73f57-eedc-484a-89e4-20aeef0b73fc' }
+};
+
+// `open-scene` forwards whatever it is given, and a url is not a uuid: the editor loads nothing
+// and leaves a fresh scene behind.
+test('open resolves a db:// url to a uuid before the editor is told to open it', async () => {
+    const driver = new MemoryDriver(SCENE_ON_DISK);
     const output = present(await sceneOpen(driver, { target: 'db://assets/main.scene' }));
     assert.match(output.stdout, /^ok {2}opened db:\/\/assets\/main\.scene/);
     assert.equal(driver.calls.find(call => call.name === 'scene.openScene').args[0],
-        'db://assets/main.scene');
+        '0ba73f57-eedc-484a-89e4-20aeef0b73fc');
+});
+
+test('open by uuid names the url back, so the answer says which file was opened', async () => {
+    const output = present(await sceneOpen(new MemoryDriver(SCENE_ON_DISK),
+        { target: '0ba73f57-eedc-484a-89e4-20aeef0b73fc' }));
+    assert.match(output.stdout, /^ok {2}opened db:\/\/assets\/main\.scene/);
+});
+
+test('an address the database does not know is refused before the editor is told anything', async () => {
+    const driver = new MemoryDriver(SCENE_ON_DISK);
+    const output = present(await sceneOpen(driver, { target: 'db://assets/gone.scene' }));
+    assert.match(output.stdout, /^FAILED/);
+    assert.match(output.stdout, /db:\/\/assets\/gone\.scene/);
+    assert.equal(output.failed, true);
+    assert.equal(driver.calls.some(call => call.name === 'scene.openScene'), false);
+});
+
+// The editor answers an address it cannot load with a new, never-saved scene and no error at all.
+test('a scene other than the one asked for left open is a failure rather than an ok', async () => {
+    const driver = new MemoryDriver({
+        ...SCENE_ON_DISK,
+        opensAs: { '0ba73f57-eedc-484a-89e4-20aeef0b73fc': '3e7bbb9e-ee77-4dac-bb0b-ef4ff2693369' }
+    });
+    const output = present(await sceneOpen(driver,
+        { target: 'db://assets/main.scene', poll: { timeoutMs: 20, intervalMs: 5 } }));
+    assert.match(output.stdout, /^FAILED/);
+    assert.match(output.stdout, /3e7bbb9e-ee77-4dac-bb0b-ef4ff2693369/);
+    assert.equal(output.failed, true);
+});
+
+test('a scene script that will not say which scene is open is unverified rather than ok', async () => {
+    const driver = new MemoryDriver({
+        ...SCENE_ON_DISK, refuses: { getCurrentSceneInfo: 'the scene worker is reloading' }
+    });
+    const output = present(await sceneOpen(driver,
+        { target: 'db://assets/main.scene', poll: { timeoutMs: 20, intervalMs: 5 } }));
+    assert.match(output.stdout, /^UNVERIFIED/);
+    assert.match(output.stderr, /the scene worker is reloading/);
+    assert.equal(output.failed, false);
 });
 
 test('save goes through the editor rather than writing the file itself', async () => {

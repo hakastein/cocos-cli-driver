@@ -1,7 +1,10 @@
 import { Command } from 'commander';
-import type { Driver, SceneNodeEntry } from '@cocos-cli/shared';
+import type { Driver, SceneInfo, SceneNodeEntry } from '@cocos-cli/shared';
 import { unwrap, withClient } from './shared.ts';
 import { resolveNode } from './node.ts';
+import { queryOne } from '../asset/db.ts';
+import { settle } from '../settle.ts';
+import type { PollOptions } from '../component-add.ts';
 import type { DumpNode, Report } from '../render/present.ts';
 import type { Resolved } from '../resolve.ts';
 
@@ -64,9 +67,71 @@ export async function sceneMissing(client: Driver, spec: { root?: string }): Pro
     };
 }
 
-export async function sceneOpen(client: Driver, spec: { target: string }): Promise<Report> {
-    await client.editor.scene.openScene(spec.target);
-    return { kind: 'action', verdict: 'ok', summary: `opened ${spec.target}` };
+/** Wider than `settle`'s default: a scene of a few hundred nodes takes seconds to load. */
+const OPEN_POLL: PollOptions = { timeoutMs: 10_000, intervalMs: 100 };
+
+interface SettledScene {
+    info: SceneInfo | null;
+    /** What the scene script answered instead, when it refused to say which scene is open. */
+    refusal?: string;
+}
+
+/** Which scene the editor is on once it has settled on the one asked for, or the last answer. */
+async function openedScene(
+    client: Driver, wanted: string, poll?: PollOptions
+): Promise<SettledScene> {
+    let info: SceneInfo | null = null;
+    let refusal: string | undefined;
+    await settle(async () => {
+        const answer = await client.scene.call('getCurrentSceneInfo');
+        info = answer.success ? answer.data : null;
+        refusal = answer.success ? undefined : answer.error;
+        return info !== null && info.uuid === wanted;
+    }, poll || OPEN_POLL);
+    return { info, refusal };
+}
+
+/**
+ * `open-scene` takes a uuid and forwards whatever it is given. Handed a `db://` url it loads
+ * nothing, leaves a fresh never-saved scene in place of the one that was open, and reports no
+ * error — so the address is resolved to a uuid first, and which scene the editor ended up on is
+ * read back before anything is called `ok`.
+ */
+export async function sceneOpen(
+    client: Driver, spec: { target: string; poll?: PollOptions }
+): Promise<Report> {
+    const asset = await queryOne(client, spec.target);
+    if (!asset) {
+        return {
+            kind: 'action',
+            verdict: 'FAILED',
+            summary: `the asset database does not know ${spec.target}; nothing was opened`
+        };
+    }
+
+    await client.editor.scene.openScene(asset.uuid);
+    const { info: opened, refusal } = await openedScene(client, asset.uuid, spec.poll);
+
+    if (opened === null) {
+        return {
+            kind: 'action',
+            verdict: 'UNVERIFIED',
+            summary: `opened ${asset.url}`,
+            note: refusal || 'the scene script did not say which scene is open'
+        };
+    }
+    if (opened.uuid !== asset.uuid) {
+        return {
+            kind: 'action',
+            verdict: 'FAILED',
+            summary: `${asset.url} is not open; the editor is on '${opened.name}' (${opened.uuid})`
+        };
+    }
+    return {
+        kind: 'action',
+        verdict: 'ok',
+        summary: `opened ${asset.url}  ${opened.name}  nodes: ${opened.nodeCount}`
+    };
 }
 
 export async function sceneSave(client: Driver): Promise<Report> {
