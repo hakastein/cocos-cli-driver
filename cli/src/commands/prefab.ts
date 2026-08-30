@@ -137,10 +137,9 @@ export async function prefabInstantiate(client: Driver, spec: InstantiateSpec): 
         return {
             kind: 'action',
             verdict: 'FAILED',
-            summary: source,
-            note: refusal
+            summary: `${source}  ${refusal
                 ? `the scene did not answer where the node is: ${refusal}`
-                : 'the editor answered that uuid and no such node is in the scene'
+                : 'the editor answered that uuid and no such node is in the scene'}`
         };
     }
 
@@ -150,10 +149,11 @@ export async function prefabInstantiate(client: Driver, spec: InstantiateSpec): 
     return {
         kind: 'action',
         verdict: worstVerdict([verdict.verdict, held ? 'ok' : 'FAILED']),
-        summary: `${source}  at ${placement.path}`,
-        note: held
-            ? verdict.detail
-            : `${misplacedDetail(placement, spec.parent || 'the scene root')}\n${verdict.detail}`
+        summary: [
+            `${source}  at ${placement.path}`,
+            held ? '' : misplacedDetail(placement, spec.parent || 'the scene root'),
+            verdict.detail
+        ].filter(Boolean).join('  ')
     };
 }
 
@@ -187,8 +187,7 @@ export async function prefabCreate(
         kind: 'action',
         verdict: 'ok',
         summary: `${spec.target} written to ${written.url}  ${written.uuid}`,
-        note: 'the source node did not become an instance — unlike a drag into the Assets panel; '
-            + `linking it to the asset takes a fresh 'cocos prefab instantiate'`
+        warnings: ['the source node did not become an instance of the prefab it was written to']
     };
 }
 
@@ -208,9 +207,10 @@ export async function prefabInfo(client: Driver, spec: { target: string }): Prom
             `${spec.target}  prefab ${report.asset || 'unknown'}`,
             report.instanceRoot ? 'instance root' : 'inside an instance',
             `fileId=${report.fileId || 'none'}`,
-            report.persistenceChecked ? `persisted=${report.persisted}` : 'persisted=unknown'
-        ].join('  '),
-        note: report.persistenceReason || undefined
+            report.persistenceChecked
+                ? `persisted=${report.persisted}`
+                : `persisted=unknown (${report.persistenceReason || 'no reason given'})`
+        ].join('  ')
     };
 }
 
@@ -271,9 +271,7 @@ export function registerPrefab(program: Command, resolve: () => Promise<Resolved
     prefab
         .command('dump <asset>')
         .description('tree of a .prefab asset: nodes and components under their registered names')
-        .option('--json', 'print the structural form instead of text')
-        .action((asset: string, options: { json?: boolean }) =>
-            withClient(resolve, client => prefabDump(client, { asset }), { json: options.json }));
+        .action((asset: string) => withClient(resolve, client => prefabDump(client, { asset })));
 
     prefab
         .command('instantiate <asset>')
@@ -307,9 +305,8 @@ export function registerPrefab(program: Command, resolve: () => Promise<Resolved
     prefab
         .command('overrides <path>')
         .description('what an instance holds on top of its prefab')
-        .option('--json', 'print the structural form instead of text')
-        .action((target: string, options: { json?: boolean }) =>
-            withClient(resolve, client => prefabOverrides(client, { target }), { json: options.json }));
+        .action((target: string) =>
+            withClient(resolve, client => prefabOverrides(client, { target })));
 
     prefab
         .command('rm-override <path> <property>')

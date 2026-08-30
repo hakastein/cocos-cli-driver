@@ -91,15 +91,17 @@ test('the report names the component asked for, not the dependency attached ahea
     const driver = scene({ classes: [], attaches: { 'cc.Sprite': ['cc.UITransform', 'cc.Sprite'] } });
     const text = await printed(nodeCreate(
         driver, { parent: 'Canvas/Bg', name: 'New', components: ['cc.Sprite'], poll: FAST }));
-    assert.match(text, /^ok {2}created Canvas\/Bg\/New {2}\S+ {2}\[cc\.Sprite\]/);
+    assert.match(text, /^created Canvas\/Bg\/New {2}\S+ {2}\[cc\.Sprite\]/);
 });
 
 test('a created node whose component appeared under no spelling asked for is UNVERIFIED', async () => {
     const driver = scene({ classes: [], attaches: { '2f3aRk1': ['cc.UITransform', 'cc.Sprite'] } });
-    const text = await printed(nodeCreate(
+    const output = present(await nodeCreate(
         driver, { parent: 'Canvas/Bg', name: 'New', components: ['2f3aRk1'], poll: FAST }));
-    assert.match(text,
+    assert.equal(output.stdout, undefined);
+    assert.match(output.stderr,
         /^UNVERIFIED {2}created Canvas\/Bg\/New {2}\S+ {2}the node gained cc\.UITransform, cc\.Sprite, nothing named 2f3aRk1 or cc\.2f3aRk1/);
+    assert.equal(output.exitCode, 3);
 });
 
 test('a component the engine never registered is refused rather than passed off as ok', async () => {
@@ -151,9 +153,9 @@ const instanced = (prefab) => new MemoryDriver({
 
 test('a write to a plain node is proven to survive a save', async () => {
     const output = present(await nodeSet(guard(), { target: 'Environment/Guard', position: { x: 1, y: 2, z: 3 }, poll: FAST }));
-    assert.match(output.stdout, /^ok/);
+    assert.match(output.stdout, /^Environment\/Guard\.position/);
     assert.match(output.stdout, /persisted=true/);
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 0);
 });
 
 // The defect the unified write report exists for: the scene file carries nothing for a node inside
@@ -161,42 +163,44 @@ test('a write to a plain node is proven to survive a save', async () => {
 test('a write inside a prefab instance that records no override is UNPERSISTED', async () => {
     const output = present(await nodeSet(instanced({ asset: 'p-1' }), {
         target: 'Environment/cc_scene/Guard', position: { x: 1, y: 2, z: 3 }, poll: FAST }));
-    assert.equal(output.stdout.split('  ')[0], 'UNPERSISTED');
-    assert.match(output.stdout, /_lpos/);
-    assert.equal(output.failed, true);
+    assert.equal(output.stderr.split('  ')[0], 'UNPERSISTED');
+    assert.match(output.stderr, /_lpos/);
+    assert.equal(output.exitCode, 4);
 });
 
 test('the same write is ok once the editor records the override that carries it', async () => {
     const output = present(await nodeSet(instanced({ asset: 'p-1', recordsOverrides: true }), {
         target: 'Environment/cc_scene/Guard', position: { x: 1, y: 2, z: 3 }, poll: FAST }));
-    assert.match(output.stdout, /^ok/);
+    assert.equal(output.exitCode, 0);
     assert.match(output.stdout, /persisted=true/);
     assert.match(output.stdout, /override on Environment\/cc_scene\/Guard/);
 });
 
-test('a prefab whose overrides cannot be read leaves persistence unknown rather than false', async () => {
+// Nobody looked is not the same answer as a save proven to drop it, and neither one is a success.
+test('a prefab whose overrides cannot be read is UNVERIFIED, not UNPERSISTED', async () => {
     const output = present(await nodeSet(instanced({ asset: 'p-1', readable: false }), {
         target: 'Environment/cc_scene/Guard', position: { x: 1, y: 2, z: 3 }, poll: FAST }));
-    assert.match(output.stdout, /persisted=unknown/);
-    assert.equal(output.failed, false);
+    assert.match(output.stderr, /^UNVERIFIED/);
+    assert.match(output.stderr, /persisted=unknown/);
+    assert.equal(output.exitCode, 3);
 });
 
-// The head word is read off the first line, so the worst of the writes has to be there.
-test('several writes lead with the one a save would drop, not with the one that landed', async () => {
+// A line lifted out of a merged log has no line above it to take its subject from, so every write
+// of a bracket repeats its own target and property.
+test('each write of a bracket is one self-contained line, and the batch ends on the worst', async () => {
     const driver = instanced({ asset: 'p-1' });
     const output = present(await nodeSet(driver, {
         target: 'Environment/cc_scene', name: 'Sentry', position: { x: 1, y: 2, z: 3 }, poll: FAST }));
-    const lines = output.stdout.split('\n');
-    assert.equal(lines[0].split('  ')[0], 'UNPERSISTED');
-    assert.match(lines[1], /^ {2}\w+ {2}name = "Sentry"/);
-    assert.match(lines[2], /^ {2}UNPERSISTED {2}position/);
-    assert.equal(output.failed, true);
+    const lines = output.stderr.split('\n');
+    assert.match(lines[0], /^UNPERSISTED {2}Environment\/cc_scene\.name = "Sentry"/);
+    assert.match(lines[1], /^UNPERSISTED {2}Environment\/cc_scene\.position/);
+    assert.equal(output.exitCode, 4);
 });
 
 test('the instance root keeps its own parent in the file, so a move of it is proven', async () => {
     const driver = guard();
     const output = present(await nodeMove(driver, { target: 'Environment/Guard', parent: 'Bunker', poll: FAST }));
-    assert.match(output.stdout, /^ok {2}Environment\/Guard\.parent = "Bunker"/);
+    assert.match(output.stdout, /^Environment\/Guard\.parent = "Bunker"/);
     assert.match(output.stdout, /persisted=true/);
     assert.equal(driver.uuidOf('Bunker/Guard'), driver.uuidOf('Bunker/Guard'));
 });
@@ -213,7 +217,7 @@ test('a move is one undo step and the copy question is asked of the file, not of
 test('a duplicate names the new uuid and answers whether the file will hold it', async () => {
     const driver = guard();
     const output = present(await nodeDuplicate(driver, { target: 'Environment/Guard', poll: FAST }));
-    assert.match(output.stdout, /^ok {2}Guard\.parent/);
+    assert.match(output.stdout, /^Guard\.parent/);
     assert.match(output.stdout, /copy of Environment\/Guard, uuid \S+/);
     assert.match(output.stdout, /persisted=true/);
 });
@@ -231,15 +235,15 @@ test('a value the node did not take cuts the rest of the writes short', async ()
 // without projecting the two onto one spelling every duplicate of a root node reads as UNPERSISTED.
 test('a copy of a root node is proven to survive, not reported as dropped on save', async () => {
     const output = present(await nodeDuplicate(guard(), { target: 'Bunker', poll: FAST }));
-    assert.match(output.stdout, /^ok {2}Bunker\.parent/);
+    assert.match(output.stdout, /^Bunker\.parent/);
     assert.match(output.stdout, /persisted=true/);
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 0);
 });
 
 test('rm takes the node out of the scene rather than only reporting that it did', async () => {
     const driver = guard();
     const output = present(await nodeRemove(driver, { target: 'Environment/Guard' }));
-    assert.match(output.stdout, /^ok {2}removed Environment\/Guard/);
+    assert.equal(output.stdout, 'removed Environment/Guard');
     await assert.rejects(() => resolveNode(driver, 'Environment/Guard'));
 });
 
@@ -259,7 +263,7 @@ const moved = (extra = {}) => new MemoryDriver({
 test('reset --prop returns the property and names both values', async () => {
     const driver = moved();
     const output = present(await nodeReset(driver, { target: 'Canvas/Bg', property: 'position' }));
-    assert.match(output.stdout, /^ok/);
+    assert.equal(output.exitCode, 0);
     assert.match(output.stdout, /"x":12/);
     assert.match(output.stdout, /"x":0/);
 });
@@ -273,9 +277,9 @@ test('reset --prop leaves the properties it was not asked about alone', async ()
 
 test('reset --transform answers for all three and marks the one that did not move', async () => {
     const output = present(await nodeReset(moved(), { target: 'Canvas/Bg', transform: true }));
-    assert.match(output.stdout, /^ok {2}Canvas\/Bg {2}3 writes/);
-    assert.match(output.stdout, /position = \{"x":0,"y":0,"z":0\}.*was \{"x":12/);
-    assert.match(output.stdout, /rotation.*already at the value it resets to/);
+    assert.equal(output.stdout.split('\n').length, 3);
+    assert.match(output.stdout, /Canvas\/Bg\.position = \{"x":0,"y":0,"z":0\}.*was \{"x":12/);
+    assert.match(output.stdout, /Canvas\/Bg\.rotation.*already at the value it resets to/);
 });
 
 test('a reset that changed nothing says so instead of printing the same value twice', async () => {
@@ -299,13 +303,14 @@ const instance = (over = {}) => new MemoryDriver({
 test('inside a prefab instance the reset is called out as not restoring the asset', async () => {
     const output = present(await nodeReset(instance(), { target: 'Hero', property: 'position' }));
     assert.match(output.stdout, /"x":0/);
-    assert.match(output.stderr, /prefab rm-override/);
+    assert.equal(output.warnings.length, 1);
+    assert.match(output.warnings[0], /declared class default/);
 });
 
 test('the override the reset leaves behind is what makes a save carry it', async () => {
     const output = present(await nodeReset(instance(), { target: 'Hero', property: 'position' }));
     assert.match(output.stdout, /persisted=true/);
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 0);
 });
 
 // A reset the instance records nothing for is undone by the next load; an `ok` over that is the
@@ -313,8 +318,8 @@ test('the override the reset leaves behind is what makes a save carry it', async
 test('a reset no override carries is UNPERSISTED and exits non-zero', async () => {
     const output = present(await nodeReset(instance({ recordsOverrides: false }),
         { target: 'Hero', property: 'position' }));
-    assert.match(output.stdout, /^UNPERSISTED/);
-    assert.equal(output.failed, true);
+    assert.match(output.stderr, /^UNPERSISTED/);
+    assert.equal(output.exitCode, 4);
 });
 
 test('reset is wrapped in an undo bracket', async () => {
@@ -342,9 +347,10 @@ test('a property a node does not have is refused, naming the ones it does', asyn
 
 // The editor takes the message for these two and does nothing with it, so forwarding them would
 // print an `ok` over a value that never moved.
-test('a property the editor declares no default for is refused, pointing at node set', async () => {
+test('a property the editor declares no default for is refused rather than forwarded', async () => {
     await assert.rejects(
-        () => nodeReset(moved(), { target: 'Canvas/Bg', property: 'active' }), /node set/);
+        () => nodeReset(moved(), { target: 'Canvas/Bg', property: 'active' }),
+        /declares no default for 'active'/);
 });
 
 const rigged = (sockets) => new MemoryDriver({
@@ -360,7 +366,8 @@ test('socket ls names the bone, the tracking node and the baked-animation flag',
     const output = present(await nodeSocketList(rigged([{ path: 'Hips/RightHand' }]), { target: 'guard' }));
     assert.match(output.stdout, /Hips\/RightHand/);
     assert.match(output.stdout, /RightHand Socket/);
-    assert.match(output.stderr, /useBakedAnimation=true/);
+    assert.match(output.stdout, /^useBakedAnimation=true$/m);
+    assert.equal(output.stderr, undefined);
 });
 
 test('a node without the animation component is refused rather than answered with no sockets', async () => {
@@ -373,14 +380,14 @@ test('adding a socket reports it as created and names the node that now tracks t
     const output = present(await nodeSocketAdd(driver, { target: 'guard', bone: 'Hips/RightHand' }));
     assert.match(output.stdout, /socket added/);
     assert.match(output.stdout, /RightHand Socket/);
-    assert.match(present(await nodeSocketList(driver, { target: 'guard' })).stderr, /sockets: 1/);
+    assert.match(output.stdout, /sockets: 1/);
 });
 
 test('adding the same bone twice reuses the socket instead of stacking a second one', async () => {
     const driver = rigged([{ path: 'Hips/RightHand' }]);
     const output = present(await nodeSocketAdd(driver, { target: 'guard', bone: 'Hips/RightHand' }));
     assert.match(output.stdout, /already there/);
-    assert.match(present(await nodeSocketList(driver, { target: 'guard' })).stderr, /sockets: 1/);
+    assert.match(output.stdout, /sockets: 1/);
 });
 
 test('a bone path naming no joint is refused: a socket on one would sit dead at the origin', async () => {
@@ -388,9 +395,13 @@ test('a bone path naming no joint is refused: a socket on one would sit dead at 
         () => nodeSocketAdd(rigged([]), { target: 'guard', bone: 'Hips/LeftFoot' }), /Hips\/LeftFoot/);
 });
 
-test('the note says Ctrl+Z does not reach a socket, since it is written on the live component', async () => {
+// The write went onto the live component, past the undo stack, so the scene has to be saved for it
+// to last — and that is what this call did rather than what a socket is.
+test('a socket write warns that Ctrl+Z does not reach it', async () => {
     const output = present(await nodeSocketAdd(rigged([]), { target: 'guard', bone: 'Hips/RightHand' }));
-    assert.match(output.stderr, /Ctrl\+Z/);
+    assert.equal(output.stderr, undefined);
+    assert.equal(output.warnings.length, 1);
+    assert.match(output.warnings[0], /Ctrl\+Z/);
 });
 
 test('removing a socket names the target node it destroyed and what is left', async () => {
@@ -398,7 +409,7 @@ test('removing a socket names the target node it destroyed and what is left', as
     const output = present(await nodeSocketRemove(driver, { target: 'guard', bone: 'Hips/RightHand' }));
     assert.match(output.stdout, /socket removed/);
     assert.match(output.stdout, /sockets: 0/);
-    assert.match(output.stderr, /parented under it/);
+    assert.ok(output.warnings.some(warning => /parented under it/.test(warning)));
 });
 
 test('removing a bone with no socket is refused rather than reported as a removal', async () => {

@@ -23,8 +23,8 @@ export interface BuildRunSpec {
     timeoutMs?: number;
 }
 
-function refusal(summary: string, note?: string): Report {
-    return { kind: 'action', verdict: 'FAILED', summary, note };
+function refusal(summary: string): Report {
+    return { kind: 'action', verdict: 'FAILED', summary };
 }
 
 /**
@@ -51,12 +51,7 @@ export async function buildStatus(client: Driver): Promise<Report> {
 
 export async function buildPanel(client: Driver): Promise<Report> {
     await client.editor.builder.openPanel();
-    return {
-        kind: 'action',
-        verdict: 'ok',
-        summary: 'build panel opened',
-        note: 'this only shows the panel to whoever is at the editor; it starts no build'
-    };
+    return { kind: 'action', verdict: 'ok', summary: 'build panel opened' };
 }
 
 function listTasks(tasks: readonly BuildTask[]): string {
@@ -73,12 +68,9 @@ function conflictRefusal(
     const spelled = (pick: 'saved' | 'requested') =>
         conflicts.map(conflict => `${conflict.field}=${JSON.stringify(conflict[pick])}`).join(', ');
     return refusal(
-        `building ${platform} would overwrite the saved settings of task ${described.taskId}`,
-        `task ${described.taskId} ("${described.taskName}") is configured with ${spelled('saved')}, `
-        + `and this call asks for ${spelled('requested')}. Building it writes those values onto the `
-        + 'task for good. Nothing was built and nothing was changed.\n'
-        + 'Drop the override to rebuild the task as configured, pass --new-task to build a separate '
-        + 'task with these settings, or pass --allow-task-edit to really change this one.');
+        `building ${platform} would overwrite the saved settings of task ${described.taskId} `
+        + `("${described.taskName}"), which holds ${spelled('saved')} against the `
+        + `${spelled('requested')} asked for; nothing was built and nothing was changed`);
 }
 
 /**
@@ -111,12 +103,10 @@ async function savedBuildOptions(client: Driver, platform: string): Promise<Buil
  */
 export async function buildRun(client: Driver, spec: BuildRunSpec): Promise<Report> {
     if (await client.editor.builder.queryWorkerReady() !== true) {
-        return refusal('the build worker is not ready',
-            'it starts with the editor; retry in a few seconds');
+        return refusal('the build worker is not ready');
     }
     if (spec.newTask === true && spec.taskId !== undefined) {
-        return refusal('--new-task and --task contradict each other',
-            'one adds a task, the other rebuilds an existing one');
+        return refusal('--new-task and --task contradict each other');
     }
 
     const overrides: Record<string, unknown> = { ...spec.options };
@@ -133,18 +123,16 @@ export async function buildRun(client: Driver, spec: BuildRunSpec): Promise<Repo
             target = existing.find(task => String(task.id) === spec.taskId);
             if (!target) {
                 const elsewhere = all.find(task => String(task.id) === spec.taskId);
-                return refusal(`no ${spec.platform} build task with id ${spec.taskId}`,
-                    elsewhere
-                        ? `build task ${spec.taskId} is a ${elsewhere.options?.platform} task, not `
-                            + `${spec.platform}`
-                        : `list them with \`cocos build status\`:\n${listTasks(existing)}`);
+                return refusal(elsewhere
+                    ? `build task ${spec.taskId} is a ${elsewhere.options?.platform} task, not `
+                        + `${spec.platform}`
+                    : `no ${spec.platform} build task with id ${spec.taskId}; ${spec.platform} has:\n`
+                        + listTasks(existing));
             }
         } else if (existing.length > 1) {
             return refusal(
-                `${spec.platform} has ${existing.length} build tasks holding different settings`,
-                'picking one is how a configuration gets destroyed. Pass --task to name the one to '
-                + 'rebuild, or --new-task to build a separate task. Nothing was built.\n'
-                + listTasks(existing));
+                `${spec.platform} has ${existing.length} build tasks holding different settings, `
+                + `and nothing was built:\n${listTasks(existing)}`);
         } else {
             target = existing[0];
         }
@@ -210,9 +198,7 @@ export function registerBuild(program: Command, resolve: () => Promise<Resolved>
 
     build.command('status')
         .description('whether the build worker is up, and the tasks the Build panel holds')
-        .option('--json', 'print the structural form instead of text')
-        .action((options: { json?: boolean }) =>
-            withClient(resolve, buildStatus, { json: options.json }));
+        .action(() => withClient(resolve, buildStatus));
 
     build.command('panel')
         .description('open the editor Build panel for whoever is sitting at it; starts no build')
@@ -228,10 +214,9 @@ export function registerBuild(program: Command, resolve: () => Promise<Resolved>
         .option('--options <json>', 'extra IBuildTaskOption fields merged over the task\'s own')
         .option('--allow-task-edit', 'permit this build to overwrite the task\'s saved settings')
         .option('--timeout <ms>', `how long to wait for the build (default ${DEFAULT_BUILD_TIMEOUT_MS})`)
-        .option('--json', 'print the structural form instead of text')
         .action((options: {
             platform: string; task?: string; newTask?: boolean; debug?: string; options?: string;
-            allowTaskEdit?: boolean; timeout?: string; json?: boolean;
+            allowTaskEdit?: boolean; timeout?: string;
         }) => withClient(resolve, client => buildRun(client, {
             platform: options.platform,
             taskId: options.task,
@@ -242,5 +227,5 @@ export function registerBuild(program: Command, resolve: () => Promise<Resolved>
                 : jsonFlag(options.options) as Record<string, unknown>,
             allowTaskEdit: options.allowTaskEdit,
             timeoutMs: numberFlag('--timeout', options.timeout)
-        }), { json: options.json }));
+        })));
 }

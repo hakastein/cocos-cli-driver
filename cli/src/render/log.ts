@@ -32,7 +32,8 @@ function windowTail(window: LogWindow): string {
     ].filter(Boolean).join('  ');
 }
 
-export function logTailSummary(file: LogFileInfo, window: LogWindow, returned: number): string {
+/** Which file was read and what the window cut out of it, neither of which the entries carry. */
+export function logTailHead(file: LogFileInfo, window: LogWindow, returned: number): string {
     return [
         fileLine(file),
         [
@@ -51,7 +52,7 @@ export function renderLogMatches(result: LogSearchResult): string {
     return groups.map(group => group.join('\n')).join('\n\n');
 }
 
-export function logSearchSummary(
+export function logSearchHead(
     file: LogFileInfo, window: LogWindow, result: LogSearchResult
 ): string {
     return [
@@ -61,8 +62,7 @@ export function logSearchSummary(
             `pattern '${result.pattern}'`,
             result.regex ? 'regex' : '',
             result.caseSensitive ? 'case-sensitive' : '',
-            windowTail(window),
-            result.truncated ? `raise -n above ${result.maxResults} for the rest` : ''
+            windowTail(window)
         ].filter(Boolean).join('  ')
     ].join('\n');
 }

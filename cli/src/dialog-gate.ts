@@ -63,19 +63,19 @@ export function gateReport(refusal: GateRefusal, disk: DiskAnswer | null): Repor
         verdict: 'FAILED',
         summary: `${command} was not run: the editor holds an unsaved scene, and running it would `
             + `raise a dialog that stops every command for this project until a person answers it. `
-            + remedy(disk)
+            + againstDisk(disk)
     };
 }
 
-function remedy(disk: DiskAnswer | null): string {
-    if (!disk || !disk.ok) {
-        return 'Save with `cocos scene save`, or put the scene back the way it was and save.';
-    }
+/**
+ * The editor's own flag counts undo steps, so an action that put the scene back the way it was
+ * still raises it; whether a save would carry anything is the disk comparison's question.
+ */
+function againstDisk(disk: DiskAnswer | null): string {
+    if (!disk) return 'The scene was not compared with the file on disk.';
+    if (!disk.ok) return `The scene was not compared with the file on disk (${disk.error}).`;
     const where = disk.dirty.scenePath || 'the file on disk';
-    if (!disk.dirty.differsFromDisk) {
-        return `The scene matches ${where}, so nothing a save would carry has changed: `
-            + '`cocos scene save` writes the same bytes and clears the flag.';
-    }
-    return `The scene differs from ${where} in ${disk.dirty.diffs.length} place(s): save with `
-        + '`cocos scene save`, or put it back the way it was and save.';
+    return disk.dirty.differsFromDisk
+        ? `The scene differs from ${where} in ${disk.dirty.diffs.length} place(s).`
+        : `The scene matches ${where}, so nothing a save would carry has changed.`;
 }

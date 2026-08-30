@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    buildRunSummary, buildVerdict, builderStatusSummary, renderBuildRun, renderBuilderStatus
+    buildRunHead, buildVerdict, buildWarnings, renderBuildRun, renderBuilderStatus
 } from '../src/render/build.ts';
 
 const RUN = {
@@ -64,8 +64,10 @@ test('a wait that ran out is a TIMEOUT — the build is still running in the edi
         'TIMEOUT');
 });
 
-test('the head line leads with the verdict, the platform and the exit code by name', () => {
-    assert.match(renderBuildRun(RUN), /^ok {2}web-mobile {2}BUILD_SUCCESS\(36\) {2}state=success {2}148\.3s$/m);
+// The presenter puts the verdict word in front of this line; the renderer never carries `ok`.
+test('the head names the platform, the exit code and the state, with no verdict word', () => {
+    assert.equal(buildRunHead(RUN),
+        'web-mobile  BUILD_SUCCESS(36)  state=success  debug=false  148.3s');
 });
 
 test('the task that was built and where its output landed are on their own lines', () => {
@@ -78,21 +80,21 @@ test('a new task says it was added rather than rebuilt', () => {
     assert.match(renderBuildRun({ ...RUN, rebuiltExistingTask: false }), /^task .* {2}added as a new task$/m);
 });
 
-test('settings the build wrote onto the task are named — that edit is permanent', () => {
-    assert.match(
-        buildRunSummary({ ...RUN, modifiedTaskSettings: ['debug', 'sourceMaps'] }),
-        /wrote onto the task: debug, sourceMaps/);
-});
-
-test('an exit code the task state contradicts is spelled out, not left to the verdict word', () => {
-    assert.match(buildRunSummary({ ...RUN, state: 'failure' }),
-        /returned BUILD_SUCCESS.*task state is "failure"/);
+// A build that edited the Build panel row it rebuilt did something past what was asked of it.
+test('settings the build wrote onto the task are warned about — that edit is permanent', () => {
+    const warnings = buildWarnings({ ...RUN, modifiedTaskSettings: ['debug', 'sourceMaps'] });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /debug, sourceMaps/);
 });
 
 test('a new task landing on another row output says whose artefacts it replaces', () => {
-    assert.match(
-        buildRunSummary({ ...RUN, rebuiltExistingTask: false, overwrites: '1785322023936' }),
-        /same folder as task 1785322023936/);
+    const warnings = buildWarnings({ ...RUN, rebuiltExistingTask: false, overwrites: '1785322023936' });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /task 1785322023936 also writes/);
+});
+
+test('a build that changed nothing about the panel warns about nothing', () => {
+    assert.deepEqual(buildWarnings(RUN), []);
 });
 
 test('the worker line and the task rows are both on stdout', () => {
@@ -110,6 +112,3 @@ test('an empty Build panel says so instead of printing one bare line', () => {
     assert.match(renderBuilderStatus({ ready: true, idle: true, tasks: [] }), /no build tasks/);
 });
 
-test('the summary counts the tasks and the ones still running', () => {
-    assert.equal(builderStatusSummary(STATUS), 'tasks: 2  running: 1');
-});

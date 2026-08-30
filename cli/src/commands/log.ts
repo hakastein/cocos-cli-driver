@@ -111,10 +111,8 @@ export function registerLog(program: Command, resolve: () => Promise<ResolvedPro
         .option('--since <age>', 'only entries newer than this: "15m", "2h", "1d", an ISO date, or epoch ms')
         .option('--contains <text>', 'only entries whose header line carries this text')
         .option('--detail', 'print the stack frames of each entry instead of counting them')
-        .option('--json', 'print the structural form instead of text')
         .action(async (options: {
-            limit?: string; level?: string; since?: string; contains?: string;
-            detail?: boolean; json?: boolean;
+            limit?: string; level?: string; since?: string; contains?: string; detail?: boolean;
         }) => {
             await withProject(resolve, async hello => logTail({
                 projectPath: hello.projectPath,
@@ -123,7 +121,7 @@ export function registerLog(program: Command, resolve: () => Promise<ResolvedPro
                 since: options.since,
                 contains: options.contains,
                 detail: options.detail
-            }), { json: options.json });
+            }));
         });
 
     log.command('search <pattern>')
@@ -135,10 +133,9 @@ export function registerLog(program: Command, resolve: () => Promise<ResolvedPro
         .addOption(levelOption())
         .option('--since <age>', 'only entries newer than this: "15m", "2h", "1d", an ISO date, or epoch ms')
         .option('--contains <text>', 'only entries whose header line carries this text')
-        .option('--json', 'print the structural form instead of text')
         .action(async (pattern: string, options: {
             limit?: string; context?: string; regex?: boolean; caseSensitive?: boolean;
-            level?: string; since?: string; contains?: string; json?: boolean;
+            level?: string; since?: string; contains?: string;
         }) => {
             await withProject(resolve, async hello => logSearch({
                 projectPath: hello.projectPath,
@@ -150,6 +147,6 @@ export function registerLog(program: Command, resolve: () => Promise<ResolvedPro
                 level: options.level,
                 since: options.since,
                 contains: options.contains
-            }), { json: options.json });
+            }));
         });
 }

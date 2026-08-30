@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    prefabDumpSummary, prefabOverridesSummary, renderPrefabDump, renderPrefabOverrides
+    prefabOverridesHead, renderPrefabDump, renderPrefabOverrides
 } from '../src/render/prefab.ts';
 
 const component = (over = {}) => ({
@@ -50,13 +50,6 @@ test('a node with no components prints as a bare path, with no empty brackets', 
     assert.equal(renderPrefabDump(bare), 'char_hero');
 });
 
-test('the summary stays silent about dead slots when there are none', () => {
-    assert.doesNotMatch(prefabDumpSummary(dump()), /dead/);
-});
-
-test('the summary names the dead-slot count when there are any', () => {
-    assert.match(prefabDumpSummary(dump({ missingCount: 2 })), /dead components: 2/);
-});
 
 const override = (over = {}) => ({
     index: 0,
@@ -105,8 +98,14 @@ test('an asset reference prints as a name and a uuid', () => {
     assert.match(text, /idle\s+a1/);
 });
 
-test('removed components and mounted children reach the summary', () => {
-    const summary = prefabOverridesSummary({ ...report([]), removedComponents: 1, mountedChildren: 2 });
-    assert.match(summary, /removed components: 1/);
-    assert.match(summary, /mounted children: 2/);
+// A removed component and a mounted child are overrides too, and no property row lists them.
+test('removed components and mounted children reach the head', () => {
+    const head = prefabOverridesHead({ ...report([]), removedComponents: 1, mountedChildren: 2 });
+    assert.match(head, /prefab: p1/);
+    assert.match(head, /removed components: 1/);
+    assert.match(head, /mounted children: 2/);
+});
+
+test('the head does not count the override rows printed under it', () => {
+    assert.doesNotMatch(prefabOverridesHead(report([override()])), /overrides: /);
 });

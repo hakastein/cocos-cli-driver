@@ -36,26 +36,29 @@ test('a report reaches stdout and leaves the exit code alone', async () => {
     const editor = connected();
     const seen = await capture(() => withClient(editor.resolve,
         async () => ({ kind: 'action', verdict: 'ok', summary: 'the scene was saved' })));
-    assert.equal(seen.stdout, 'ok  the scene was saved\n');
+    assert.equal(seen.stdout, 'the scene was saved\n');
     assert.equal(seen.stderr, '');
     assert.equal(seen.exitCode, undefined);
 });
 
-test('a failing verdict becomes the exit code, and the line still prints', async () => {
+test('a failing verdict takes the whole report to stderr and leaves stdout empty', async () => {
     const editor = connected();
     const seen = await capture(() => withClient(editor.resolve,
         async () => ({ kind: 'action', verdict: 'FAILED', summary: 'the node is gone' })));
-    assert.equal(seen.stdout, 'FAILED  the node is gone\n');
+    assert.equal(seen.stdout, '');
+    assert.equal(seen.stderr, 'FAILED  the node is gone\n');
     assert.equal(seen.exitCode, 1);
 });
 
-test('a thrown error is a message on stderr and a non-zero exit, with nothing on stdout', async () => {
+// A merged log of both streams has to read the same way for either, so a thrown error carries the
+// mark a refusal that did reach a report carries.
+test('a thrown error is marked FAILED on stderr, with nothing on stdout', async () => {
     const editor = connected();
     const seen = await capture(() => withClient(editor.resolve, async () => {
         throw new Error('the scene script did not answer setNodeProperty');
     }));
     assert.equal(seen.stdout, '');
-    assert.equal(seen.stderr, 'the scene script did not answer setNodeProperty\n');
+    assert.equal(seen.stderr, 'FAILED  the scene script did not answer setNodeProperty\n');
     assert.equal(seen.exitCode, 1);
 });
 
@@ -77,17 +80,9 @@ test('no editor to talk to is its own exit code, and the command body never runs
         return { kind: 'action', verdict: 'ok', summary: 'unreachable' };
     }));
     assert.equal(ran, false);
-    assert.equal(seen.stderr, 'no editor is running\n');
+    assert.equal(seen.stderr, 'FAILED  no editor is running\n');
     assert.equal(seen.stdout, '');
-    assert.equal(seen.exitCode, 3);
-});
-
-test('--json reaches the presenter rather than the command body', async () => {
-    const editor = connected();
-    const asset = { uuid: 'u-rifle', url: 'db://assets/props/rifle.prefab' };
-    const seen = await capture(() => withClient(editor.resolve,
-        async () => ({ kind: 'assetList', assets: [asset], total: 1 }), { json: true }));
-    assert.equal(seen.stdout, JSON.stringify([asset]) + '\n');
+    assert.equal(seen.exitCode, 6);
 });
 
 const openProject = () => async () => ({ ok: true, hello: { projectPath: 'D:/CyberCore' } });
@@ -99,7 +94,7 @@ test('a command that needs only the project gets its path and opens no connectio
         return { kind: 'action', verdict: 'ok', summary: 'swept' };
     }));
     assert.equal(seenPath, 'D:/CyberCore');
-    assert.equal(seen.stdout, 'ok  swept\n');
+    assert.equal(seen.stdout, 'swept\n');
 });
 
 test('with no editor open the project body never runs either', async () => {
@@ -109,16 +104,28 @@ test('with no editor open the project body never runs either', async () => {
         return { kind: 'action', verdict: 'ok', summary: 'unreachable' };
     }));
     assert.equal(ran, false);
-    assert.equal(seen.exitCode, 3);
+    assert.equal(seen.exitCode, 6);
 });
 
-test('a project body that throws is a message on stderr and a non-zero exit', async () => {
+test('a project body that throws is a marked message on stderr and a non-zero exit', async () => {
     const seen = await capture(() => withProject(openProject(), async () => {
         throw new Error('could not read D:/CyberCore/assets');
     }));
     assert.equal(seen.stdout, '');
-    assert.equal(seen.stderr, 'could not read D:/CyberCore/assets\n');
+    assert.equal(seen.stderr, 'FAILED  could not read D:/CyberCore/assets\n');
     assert.equal(seen.exitCode, 1);
+});
+
+// The class of failure has to be readable off the number alone, without parsing the text.
+test('each failing class carries its own exit code out to the process', async () => {
+    const editor = connected();
+    const codes = {};
+    for (const verdict of ['UNVERIFIED', 'UNPERSISTED', 'TIMEOUT']) {
+        const seen = await capture(() => withClient(editor.resolve,
+            async () => ({ kind: 'action', verdict, summary: 'x' })));
+        codes[verdict] = seen.exitCode;
+    }
+    assert.deepEqual(codes, { UNVERIFIED: 3, UNPERSISTED: 4, TIMEOUT: 5 });
 });
 
 test('unwrap answers with the data the scene script sent', async () => {

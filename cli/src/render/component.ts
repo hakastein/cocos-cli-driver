@@ -29,16 +29,6 @@ export function renderClassList(classes: readonly ClassEntry[]): string {
 }
 
 /**
- * The base is what separates the two listings: with one, this is the class registry under it; with
- * none, it is what the editor offers to add, which is a shorter and differently chosen set.
- */
-export function classListSummary(count: number, base?: string): string {
-    return base === undefined
-        ? `components offered: ${count}`
-        : `classes extending ${base}: ${count}`;
-}
-
-/**
  * A socket is a `cc.SkeletalAnimation` entry, addressed through the node carrying that component.
  * The children of the target node are listed because they are the point of the socket — a weapon
  * parented under it is what the bone ends up carrying.
@@ -54,6 +44,7 @@ export function renderSockets(list: SkeletalSocketList): string {
     return rows.map(row => `${padRight(row[0], width)}  ${row[1]}${row[2]}`).join('\n');
 }
 
-export function socketsSummary(list: SkeletalSocketList): string {
-    return `sockets: ${list.sockets.length}  useBakedAnimation=${list.useBakedAnimation}`;
+/** Baked animation is what decides whether the sockets under it move a bone at all. */
+export function socketsHead(list: SkeletalSocketList): string {
+    return `useBakedAnimation=${list.useBakedAnimation}`;
 }

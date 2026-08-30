@@ -47,7 +47,5 @@ export function misplacedDetail(placement: NodePlacement, requestedParent: strin
         ? `it carries ${UI_TRANSFORM}, and createNodeFromAsset moves such a node under the nearest `
             + 'Canvas, which is where a 2D node has to be to draw at all'
         : 'the editor named no reason';
-    return `asked for under ${requestedParent}, and the editor put it at ${placement.path} — ${reason}. `
-        + `The node is in the scene: address it as ${placement.path} or by its uuid, and `
-        + `'cocos node rm' takes it back out`;
+    return `asked for under ${requestedParent}, and the editor put it at ${placement.path} — ${reason}`;
 }

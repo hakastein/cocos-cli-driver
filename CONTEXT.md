@@ -1,7 +1,8 @@
 # cocos-cli-driver
 
 An agent drives an open Cocos Creator editor from a shell: it runs `cocos <command>`, and the answer
-comes back on stdout. This file is the vocabulary that whole surface is described in — the terms the
+comes back on stdout — a non-empty stderr means the call did not succeed. This file is the
+vocabulary that whole surface is described in — the terms the
 tickets, the reports and the code all use for the same things. `CLAUDE.md` holds the architecture
 and the invariants; `docs/adr/` holds the decisions.
 
@@ -45,10 +46,17 @@ _Avoid_: mock, fake, stub, test double.
 ### Outcomes
 
 **Verdict**:
-The first word of an outcome line, from a closed set of five: `ok`, `UNVERIFIED`, `UNPERSISTED`,
-`FAILED`, `TIMEOUT`. It is computed from the report rather than chosen by the command, and it is the
-only thing that becomes an exit code.
+How a command ended, from a closed set of five: `ok`, `UNVERIFIED`, `UNPERSISTED`, `FAILED`,
+`TIMEOUT`. It is computed from the report rather than chosen by the command, and it is the only
+thing that becomes an exit code — one code per verdict. `ok` is printed nowhere; the other four open
+their line on stderr.
 _Avoid_: status, result, severity, level.
+
+**Warning**:
+A line saying what a call did past what was asked of it — a value clamped, more deleted than named,
+an undo bracket that did not open. It rides the presenter's output as a list and prints under the
+answer. It is not a verdict and does not reach the exit code.
+_Avoid_: note, caveat, remark, hint.
 
 **Write report**:
 The answer to one write into the scene: whether it was issued, whether it was read back, and whether
@@ -62,8 +70,9 @@ has no `persisted`: an asset file is written at once and outside the undo stack.
 _Avoid_: asset result, file report.
 
 **Verified**:
-The value was read back after the write. A write that was issued and not read back is `UNVERIFIED` —
-an honest gap, not a failure, and it exits zero.
+The value was read back after the write. A write that was issued and not read back is `UNVERIFIED`,
+and so is one whose persistence nobody looked into: a gap in the answer rather than a failure, and
+it exits non-zero so a chain stops on it.
 _Avoid_: confirmed, validated, checked.
 
 **Persisted**:

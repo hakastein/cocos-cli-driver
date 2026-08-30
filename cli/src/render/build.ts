@@ -1,4 +1,4 @@
-import { BuildExitCode, taskIsRunning } from '../build-task.ts';
+import { BuildExitCode } from '../build-task.ts';
 import { table } from './columns.ts';
 import type { BuildRunReport, BuilderStatus } from '../build-task.ts';
 import type { Verdict } from './verdict.ts';
@@ -16,14 +16,18 @@ export function buildVerdict(run: BuildRunReport): Verdict {
     return run.state === 'success' ? 'ok' : 'FAILED';
 }
 
-export function renderBuildRun(run: BuildRunReport): string {
-    const lines = [[
-        `${buildVerdict(run)}  ${run.platform}`,
+export function buildRunHead(run: BuildRunReport): string {
+    return [
+        run.platform,
         run.exitName === null ? 'no exit code' : `${run.exitName}(${run.exitCode})`,
         `state=${run.state}`,
+        `debug=${run.debug === undefined ? 'unknown' : run.debug}`,
         `${(run.elapsedMs / 1000).toFixed(1)}s`
-    ].join('  ')];
+    ].join('  ');
+}
 
+export function renderBuildRun(run: BuildRunReport): string {
+    const lines: string[] = [];
     if (run.taskId !== null) {
         lines.push(`task ${run.taskId}${run.taskName ? ` "${run.taskName}"` : ''}  ${
             run.rebuiltExistingTask ? 'rebuilt in place' : 'added as a new task'}`);
@@ -35,24 +39,17 @@ export function renderBuildRun(run: BuildRunReport): string {
     return lines.join('\n');
 }
 
-export function buildRunSummary(run: BuildRunReport): string {
-    const contradicted = run.exitCode !== null && run.state !== 'success' && run.state !== 'unknown';
-    return [
-        `${buildVerdict(run)}  ${run.platform}  debug=${run.debug === undefined ? 'unknown' : run.debug}`,
-        run.modifiedTaskSettings.length
-            ? `wrote onto the task: ${run.modifiedTaskSettings.join(', ')} — that edit is permanent, `
-                + 'the same as changing those fields in the Build panel'
-            : '',
-        contradicted
-            ? `the builder returned ${run.exitName} but its task state is "${run.state}"`
-            : '',
-        run.overwrites
-            ? `this new task writes to the same folder as task ${run.overwrites}: `
-                + `${run.buildPath}/${run.outputName} — that task's build output is replaced, its `
-                + 'settings are not. Pass --options to keep them apart'
-            : '',
-        run.timedOut ? 'the build is still running in the editor; watch it with `cocos build status`' : ''
-    ].filter(Boolean).join('\n');
+export function buildWarnings(run: BuildRunReport): string[] {
+    const warnings: string[] = [];
+    if (run.modifiedTaskSettings.length) {
+        warnings.push(`wrote onto task ${run.taskId}: ${run.modifiedTaskSettings.join(', ')} — `
+            + 'that edit to the Build panel row is permanent');
+    }
+    if (run.overwrites) {
+        warnings.push(`this new task writes to ${run.buildPath}/${run.outputName}, where task `
+            + `${run.overwrites} also writes: that task's build output is replaced`);
+    }
+    return warnings;
 }
 
 export function renderBuilderStatus(status: BuilderStatus): string {
@@ -70,9 +67,4 @@ export function renderBuilderStatus(status: BuilderStatus): string {
             ? task.message
             : `${Math.round(task.progress * 100)}% ${task.message}`.trim()
     ]))].join('\n');
-}
-
-export function builderStatusSummary(status: BuilderStatus): string {
-    return `tasks: ${status.tasks.length}  running: ${
-        status.tasks.filter(task => taskIsRunning(task.state)).length}`;
 }

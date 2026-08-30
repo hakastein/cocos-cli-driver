@@ -68,8 +68,8 @@ async function afterOperation(
     return { ...report, landedAt: await operation.landing(report) };
 }
 
-function outputOf(report: AssetReport, options: WaitOptions, extraNote?: string): Report {
-    return { kind: 'asset', asset: report, timeoutMs: options.timeoutMs, note: extraNote };
+function outputOf(report: AssetReport, warnings?: string[]): Report {
+    return { kind: 'asset', asset: report, warnings };
 }
 
 export async function assetRefresh(
@@ -80,7 +80,7 @@ export async function assetRefresh(
     await client.editor.assetDb.refreshAsset(url);
     return outputOf(await afterOperation(client, {
         action: 'refreshed', target: url, scope: url, landing: () => addressOf(client, url)
-    }, before, spec), spec);
+    }, before, spec));
 }
 
 export async function assetReimport(
@@ -88,14 +88,13 @@ export async function assetReimport(
 ): Promise<Report> {
     const url = requireAssetUrl(spec.target, 'the asset to reimport');
     if (!await queryOne(client, url)) {
-        throw new Error(`the asset database does not know '${url}'; if the file appeared on disk past the `
-            + `editor, run 'cocos asset refresh <folder>' first`);
+        throw new Error(`the asset database does not know '${url}'`);
     }
     const before = await snapshot(client, url);
     await client.editor.assetDb.reimportAsset(url);
     return outputOf(await afterOperation(client, {
         action: 'reimported', target: url, scope: url, landing: () => addressOf(client, url)
-    }, before, spec), spec);
+    }, before, spec));
 }
 
 export async function assetMove(
@@ -119,9 +118,10 @@ export async function assetMove(
     const report: AssetReport = settledReport.landedAt === null
         ? { ...settledReport, failure: `${from} is at no address in the database after the move` }
         : settledReport;
-    return outputOf(report, spec,
-        'a uuid survives the move, and absolute db:// paths inside an importer .meta do not: '
-            + 'materialDumpDir on a model with dumped materials keeps naming the old folder');
+    return outputOf(report, [
+        'absolute db:// paths inside the importer .meta were not moved: materialDumpDir on a model '
+            + 'with dumped materials keeps naming the old folder'
+    ]);
 }
 
 export async function assetGet(
@@ -202,7 +202,7 @@ export async function assetCopy(
 
     return outputOf(report.landedAt === null
         ? { ...report, failure: `no copy of ${from} appeared in the database` }
-        : report, spec);
+        : report);
 }
 
 export async function assetRemove(
@@ -220,7 +220,7 @@ export async function assetRemove(
 
     return outputOf(report.landedAt === null
         ? report
-        : { ...report, failure: `${existing.uuid} is still at ${report.landedAt}` }, spec);
+        : { ...report, failure: `${existing.uuid} is still at ${report.landedAt}` });
 }
 
 export async function assetMkdir(
@@ -234,11 +234,11 @@ export async function assetMkdir(
         action: 'created', target: url, scope: url, landing: () => addressOf(client, url)
     }, before, spec);
     if (report.landedAt === null) {
-        return outputOf({ ...report, failure: `${url} did not appear in the database` }, spec);
+        return outputOf({ ...report, failure: `${url} did not appear in the database` });
     }
     const created = await queryOne(client, url);
-    return outputOf(report, spec,
-        created && created.isDirectory === true ? undefined : `${url} is not a folder`);
+    return outputOf(report,
+        created && created.isDirectory === true ? undefined : [`${url} is not a folder`]);
 }
 
 export function registerAsset(program: Command, resolve: () => Promise<Resolved>): void {
@@ -254,10 +254,8 @@ export function registerAsset(program: Command, resolve: () => Promise<Resolved>
         .command('get <path>')
         .description('uuid, type, url and importer of an asset, by db:// url or uuid')
         .option('--field <name>', 'print one field as a bare value')
-        .option('--json', 'print the structural form instead of text')
-        .action((target: string, options: { field?: string; json?: boolean }) =>
-            withClient(resolve, client => assetGet(client, { target, field: options.field }),
-                { json: options.json }));
+        .action((target: string, options: { field?: string }) =>
+            withClient(resolve, client => assetGet(client, { target, field: options.field })));
 
     asset
         .command('ls [folder]')
@@ -266,14 +264,13 @@ export function registerAsset(program: Command, resolve: () => Promise<Resolved>
         .option('--name <substring>', 'narrow by name')
         .option('--exact', 'match the name exactly instead of as a substring')
         .option('--max <n>',
-            `cap on the listing (default ${DEFAULT_MAX_RESULTS}); the summary still names the full count`)
-        .option('--json', 'print the structural form instead of text')
+            `cap on the listing (default ${DEFAULT_MAX_RESULTS}); a cut listing names the full count`)
         .action((folder: string | undefined, options: {
-            type?: string; name?: string; exact?: boolean; max?: string; json?: boolean
+            type?: string; name?: string; exact?: boolean; max?: string
         }) => withClient(resolve, client => assetList(client, {
             folder, type: options.type, name: options.name, exact: options.exact,
             max: numberFlag('--max', options.max)
-        }), { json: options.json }));
+        })));
 
     waitFlags(asset
         .command('refresh <folder>')
@@ -329,9 +326,7 @@ export function registerAsset(program: Command, resolve: () => Promise<Resolved>
         .command('users <path>')
         .description('nodes of the open scene that depend on an asset — as an instance of it, or '
             + 'through a component field holding it')
-        .option('--json', 'print the structural form instead of text')
-        .action((target: string, options: { json?: boolean }) =>
-            withClient(resolve, client => assetUsers(client, { target }), { json: options.json }));
+        .action((target: string) => withClient(resolve, client => assetUsers(client, { target })));
 
     asset
         .command('ready')

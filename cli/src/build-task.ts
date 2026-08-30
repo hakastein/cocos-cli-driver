@@ -78,8 +78,6 @@ export const BUILD_PLATFORMS = [
     'xiaomi-quick-game', 'link-sure', 'cocos-play', 'baidu-mini-game', 'taobao-creative-app'
 ] as const;
 
-const RUNNING_STATES = new Set(['processing', 'waiting']);
-
 export interface BuildTaskRow {
     id: string;
     platform: string;
@@ -117,10 +115,6 @@ export interface BuildRunReport {
     overwrites: string | null;
     /** The wait ran out; the build itself is still going in the editor. */
     timedOut: boolean;
-}
-
-export function taskIsRunning(state: string): boolean {
-    return RUNNING_STATES.has(state);
 }
 
 export function taskRow(task: BuildTask): BuildTaskRow {

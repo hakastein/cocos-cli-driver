@@ -59,8 +59,9 @@ test('the window says how much of the file it covers, so a thin answer is readab
 test('the entries are on stdout and the file it read is on stderr', async () => {
     const output = present(await logTail({ projectPath: PROJECT, level: 'error' }));
     assert.match(output.stdout, /^3 .*error {2}Module "\.\.\/Joystick" not found {2}\+2 lines$/m);
-    assert.match(output.stderr, /project\.log/);
-    assert.equal(output.failed, false);
+    assert.match(output.stdout, /project\.log/);
+    assert.equal(output.stderr, undefined);
+    assert.equal(output.exitCode, 0);
 });
 
 test('search returns the matching lines with their surrounding context', async () => {

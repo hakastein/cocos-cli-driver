@@ -116,8 +116,8 @@ export async function sceneOpen(
         return {
             kind: 'action',
             verdict: 'UNVERIFIED',
-            summary: `opened ${asset.url}`,
-            note: refusal || 'the scene script did not say which scene is open'
+            summary: `opened ${asset.url}; which scene is open was not read back (${
+                refusal || 'no answer'})`
         };
     }
     if (opened.uuid !== asset.uuid) {
@@ -156,12 +156,7 @@ export async function sceneClose(client: Driver): Promise<Report> {
  */
 export async function sceneReload(client: Driver): Promise<Report> {
     await client.editor.scene.softReload();
-    return {
-        kind: 'action',
-        verdict: 'ok',
-        summary: 'components of the open scene reloaded',
-        note: 'the scene itself is kept: node uuids and writes not yet saved both survive this'
-    };
+    return { kind: 'action', verdict: 'ok', summary: 'components of the open scene reloaded' };
 }
 
 /**
@@ -171,11 +166,7 @@ export async function sceneReload(client: Driver): Promise<Report> {
  */
 export async function sceneClasses(client: Driver, spec: { base: string }): Promise<Report> {
     const classes = await client.editor.scene.queryClasses({ extends: spec.base });
-    return {
-        kind: 'classList',
-        classes: (classes || []).map(entry => ({ name: entry.name })),
-        base: spec.base
-    };
+    return { kind: 'classList', classes: (classes || []).map(entry => ({ name: entry.name })) };
 }
 
 export function registerScene(program: Command, resolve: () => Promise<Resolved>): void {
@@ -197,27 +188,22 @@ export function registerScene(program: Command, resolve: () => Promise<Resolved>
         .command('owners <class>')
         .description('which nodes of the open scene carry this component class')
         .option('--active-only', 'skip nodes switched off in the hierarchy')
-        .option('--json', 'print the structural form instead of text')
-        .action((className: string, options: { activeOnly?: boolean; json?: boolean }) =>
+        .action((className: string, options: { activeOnly?: boolean }) =>
             withClient(resolve, client => sceneOwners(client, {
                 className, activeOnly: options.activeOnly
-            }), { json: options.json }));
+            })));
 
     scene
         .command('dirty')
         .description('whether the open scene differs from the file on disk, and where')
-        .option('--json', 'print the structural form instead of text')
-        .action((options: { json?: boolean }) =>
-            withClient(resolve, sceneDirty, { json: options.json }));
+        .action(() => withClient(resolve, sceneDirty));
 
     scene
         .command('missing')
         .description('components whose script no longer resolves — that slot crashes preview')
         .option('--root <path>', 'look only under this node')
-        .option('--json', 'print the structural form instead of text')
-        .action((options: { root?: string; json?: boolean }) =>
-            withClient(resolve, client => sceneMissing(client, { root: options.root }),
-                { json: options.json }));
+        .action((options: { root?: string }) =>
+            withClient(resolve, client => sceneMissing(client, { root: options.root })));
 
     scene
         .command('open <path>')
@@ -244,7 +230,5 @@ export function registerScene(program: Command, resolve: () => Promise<Resolved>
         .command('classes <base>')
         .description('classes the engine registers under a base class; the other listing is '
             + `'component types', what the editor offers to add`)
-        .option('--json', 'print the structural form instead of text')
-        .action((base: string, options: { json?: boolean }) =>
-            withClient(resolve, client => sceneClasses(client, { base }), { json: options.json }));
+        .action((base: string) => withClient(resolve, client => sceneClasses(client, { base })));
 }

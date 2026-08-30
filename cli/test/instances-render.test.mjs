@@ -35,6 +35,10 @@ test('an empty list says so in words rather than as an empty table', () => {
     assert.match(renderInstances([]), /no open/i);
 });
 
+test('the surface checksum is a column of the ordinary listing', () => {
+    assert.match(rowByPid(renderInstances([hello('CyberCore', 'D:/c', 111)]), 111), /abc/);
+});
+
 test('same-named projects are told apart by the path on their own line', () => {
     const text = renderInstances([
         hello('Game', 'D:/a/Game', 1),

@@ -149,7 +149,7 @@ all — it is the editor UI talking to its own extension, not the CLI talking to
 | `cli/src/driver/client.ts` | `DriverClient implements Driver` — the `editor.*`/`scene.*` facades over JSON-RPC; `editor` is generated from `EDITOR_METHODS` and typed by `EditorMethods`, `scene.call` by `SceneMethods` |
 | `cli/src/driver/memory.ts` | `MemoryDriver implements Driver` — the same seam over a scene held as data, so a command's writes read back. The scene is the test's own input: nodes with components, descriptors in the editor's dump shape, `classes` for what the engine registers, `refuses` for a message that says no, and a node's `prefab` block for what the next load rebuilds — a write inside an instance records the override the editor would record. A primitive it does not model refuses by name |
 | `cli/src/driver/memory-assets.ts` | `MemoryAssetDb` — the asset half of that seam, a database held as data: the `db://` glob, and the move/copy/create/delete that rename on conflict the way the editor does |
-| `cli/src/commands/shared.ts` | `withClient` (resolve → run → present → close), `withProject` (the same without a connection, for `ecs census`) and `emit`, the one place command output touches `stdout`/`stderr`; plus `unwrap` (`SceneResult<T>` → value or thrown error) |
+| `cli/src/commands/shared.ts` | `withClient` (resolve → run → present → close), `withProject` (the same without a connection) and `emit`, the one place command output touches `stdout`/`stderr` and the exit code; plus `unwrap` (`SceneResult<T>` → value or thrown error) |
 | `cli/src/commands/flags.ts` | the coercions an `.action()` body applies to the text Commander hands through — `booleanFlag`, `numberFlag`, `requiredNumberFlag` (the same without the `undefined`, for a `requiredOption`), `vec3Flag` (all three axes, for a node being created), `vec3PartsFlag` (an empty axis keeps its value), `jsonFlag` |
 | `cli/src/component-add.ts` | the add cascade `component add` and `node create --component` share: both spellings of a type tried in turn, then polled for — for the spelling that was ASKED for, because the editor attaches a class's declared requirement AHEAD of it and the first component to appear is that dependency (checked live 2026-08-21: `--component cc.Sprite` reported `[cc.UITransform]`). An add naming nothing that appeared answers `UNVERIFIED` and says what the node did gain, rather than picking one; plus `queryComponents`, the live component list it polls |
 | `cli/src/undo-bracket.ts` | `withUndoBracket` — one write wrapped in one undo step, `undoNote` when the editor refused or left it open |
@@ -163,7 +163,7 @@ all — it is the editor UI talking to its own extension, not the CLI talking to
 | `cli/src/ecs/` | the ECS kit read off disk, no driver in any of the five: `census.ts` — the per-key sweep over the TypeScript parser's own syntax trees, moved from the MCP-era `source/ecs-census.ts` and since given the system list it reads off `class X extends system('name', …)`; `contracts.ts` — the three readings drawn on top of the per-key counts: a system named like a key, a key read outside the folder that declares it, and a key one system fills and one system reads; `receivers.ts` — what sits to the left of the dot, so `slot.node` on an engine component is not a read of the `node` key; `contributions.ts` — what a call puts on an entity, so `...spot.read()` expands to the keys the method's own literal names; `kit.ts` — the `db://assets` → directory mapping and the walk that feeds it, which follows the directory junction a shared kit is mounted into `assets/` by |
 | `cli/src/build-task.ts` | the builder's own vocabulary, kept because the editor's typings do not carry it: `BuildExitCode` (the builder answers 36 for a build that succeeded), `BUILD_PLATFORMS`, `describeTask`, and `settingConflicts` — which overrides would overwrite a Build-panel row's saved settings; plus `BuilderStatus` and `BuildRunReport`, the two shapes `render/build.ts` prints |
 | `cli/src/log/` | `{projectPath}/temp/logs/project.log`, no driver in any of the three: `entries.ts` — entry-level parsing, where the level is read from the line's own `- <level>:` field and continuation lines fold into the entry that owns them; `search.ts` — literal-by-default line search, where a blank pattern throws and regex is opt-in; `file.ts` — the read off disk, splitting the text on CRLF as well as LF because the editor writes CRLF |
-| `cli/src/render/` | `verdict.ts` (the five head words, their exit codes and `worstVerdict`) and `present.ts` (the `Report` union and `present`) over eleven formatters — `tree.ts`, `report.ts`, `property.ts`, `prefab.ts`, `asset.ts`, `scene.ts`, `component.ts` (the class registry and a node's bone sockets, both listings), `instances.ts`, `census.ts`, `build.ts`, `log.ts`, over `columns.ts`'s `padRight`/`columnWidth`. Only `present.ts` is imported from outside `render/` |
+| `cli/src/render/` | `verdict.ts` (the five verdicts, `verdictExit` and `worstVerdict`) and `present.ts` (the `Report` union and `present`) over eleven formatters — `tree.ts`, `report.ts`, `property.ts`, `prefab.ts`, `asset.ts`, `scene.ts`, `component.ts` (the class registry and a node's bone sockets, both listings), `instances.ts`, `build.ts`, `log.ts`, over `columns.ts`'s `padRight`/`columnWidth`. Only `present.ts` is imported from outside `render/` |
 
 Everything a command decides that does not need a live editor lives in a pure module beside
 `commands/`: `property/`, `render/`, `ecs/`, `log/`, `build-task.ts`, `asset/query.ts`, `asset/settle.ts`, `node-type.ts`,
@@ -222,42 +222,71 @@ established live 2026-08-22 (PLY-22) after every such write had answered `UNPERS
   own `generateTargetMap`, which is what the next load does anyway, and `instanceTargets`/`targetIn`
   are the one route to it — the target overrides in `scene/reference-write.ts` read it the same way.
 
-`cli/src/render/report.ts`'s `writeVerdict` turns a `WriteReport` into one of the five words below
-and `renderWriteReport` prints it — `persisted: null` prints as `unknown`, never as `false`, and
-`persisted: false` on the editor channel is `UNPERSISTED` rather than `ok` with a caveat in the tail.
-One bracket can carry several writes (`node set --name X --pos 1,2,3`); `renderWrites` then leads
-with a head line carrying `worstVerdict` of them, because a reader takes the head word off the first
-line and an `ok` there over an `UNPERSISTED` further down is exactly the lie this report exists to
-stop.
+`cli/src/render/report.ts`'s `writeVerdict` turns a `WriteReport` into one of the five verdicts
+below. `persisted: false` on the editor channel is `UNPERSISTED`; `persisted: null` is `UNVERIFIED`,
+because nobody having looked is a gap in the answer rather than a value proven to survive — the
+branches that leave it `null` are those where the serializer or the prefab-override list could not
+be read. One bracket can carry several writes (`node set --name X --pos 1,2,3`); `renderWrites`
+prints one self-contained line per write, naming its own target and property whether it is alone or
+one of five, and the call exits on `worstVerdict` of them — an exit code saying the name landed,
+over a position the save will drop, is the lie this report exists to stop.
 
 ## Verdicts and the Presenter
 
-The first word of an outcome line comes from a closed set, declared once in
-`cli/src/render/verdict.ts`:
+**A non-empty stderr means the call did not succeed, without exception.** A successful call writes
+its answer to stdout and nothing anywhere else; a failing one puts the whole report on stderr and
+leaves stdout empty, so a redirection of stdout into a file never holds half an answer. The word
+`ok` is printed nowhere — success is exit 0 — and the other four verdicts open their line, because a
+log merging the two streams reads an unmarked line there as data.
 
-| head | meaning | exit |
+How a command ended comes from a closed set, declared once in `cli/src/render/verdict.ts`, and each
+class carries its own exit code so a caller reads what happened without parsing the text:
+
+| verdict | meaning | exit |
 |---|---|---|
-| `ok` | done, read back, and a save either carries it or the question does not apply | 0 |
-| `UNVERIFIED` | done, and the read-back did not confirm it | 0 |
-| `UNPERSISTED` | done and verified, and a save is proven to drop it | 1 |
-| `FAILED` | not done | 1 |
-| `TIMEOUT` | did not settle inside `--timeout` | 1 |
+| `ok` | done, read back, and a save is proven to carry it or the question does not apply | 0 |
+| `FAILED` | not done; also a thrown `Error` that did not reach a report | 1 |
+| `UNVERIFIED` | done, and the read-back or the persistence question did not confirm it | 3 |
+| `UNPERSISTED` | done and verified, and a save is proven to drop it | 4 |
+| `TIMEOUT` | did not settle inside `--timeout` | 5 |
 
-Caps everywhere but `ok`. Everything that used to be its own word — a move that did not land, a
-link the serializer drops, a database still importing — is now the tail of the line.
-`verdictFailed` is the only place a verdict becomes an exit code; `UNVERIFIED` exits 0 on purpose,
-so `&&` does not break on a write that landed but could not be read back.
+`verdictExit` is the only place a verdict becomes an exit code; `worstVerdict` keeps its severity
+order and feeds only that. Two codes belong to what never reaches a report: `EXIT.USAGE` (2) for
+Commander's own refusal, and `EXIT.NO_EDITOR` (6) for no editor to talk to. `UNVERIFIED` exits
+non-zero on purpose — a chain has to stop where the editor did not confirm the write rather than
+build its next step on it. That reverses the reasoning this document carried before PLY-98.
 
-A command body assembles neither `stdout`, `stderr` nor `failed`. It answers a `Report` — a
-discriminated union in `cli/src/render/present.ts`, `kind` the tag — and `present(report, { json })`
-turns it into a `CommandOutput`. The union is what makes the set closed: a new kind of report does
-not compile until its `render` arm names a verdict. `--json` stays a per-command option (it was
-dropped as a global in `bfb4d01`, because it promised structure where there is none), and the
-`json ? JSON.stringify(x) : renderX(x)` branch lives in the presenter rather than in ten action
-bodies. A report with no structural form — `kind: 'action'`, a verdict plus a free-text tail —
-prints its text under `--json` too.
+A command body assembles neither stream nor the exit code. It answers a `Report` — a discriminated
+union in `cli/src/render/present.ts`, `kind` the tag — and `present(report)` turns it into a
+`CommandOutput` (`stdout?`, `stderr?`, `warnings: string[]`, `exitCode`). The union is what makes
+the set closed: a new kind of report does not compile until its `render` arm names a verdict.
 
-The nine `render/*` formatters are internal to the presenter: nothing outside `render/` imports
+**Warnings** ride the report as a list, and the presenter prints each as `warning: <text>` under the
+answer. A warning says what THIS call did past what was asked of it — a transform axis a 2D clamp
+zeroed, a reparent that kept the world transform and so moved the local one, a socket written on the
+live component outside the undo stack, a socket removal that destroyed the target node and its
+subtree, an asset move that left absolute `db://` paths inside an importer `.meta`, a reset inside a
+prefab instance that wrote the declared class default, a read of the first of several components of
+one class, a build that wrote settings onto an existing Build-panel row, a new build task writing
+into another task's output folder, and an undo bracket the editor refused to open or left open. It
+rides as a list so a test asks what was warned about rather than grepping rendered text.
+
+**Head lines** exist only where they carry a fact the rows do not: the full count behind a cut asset
+listing, `useBakedAnimation` beside a socket list, the scene name and nodes scanned beside a
+component-owner list, the prefab asset and the removed-component/mounted-child counts beside an
+override list, the log file and the window bounds beside a log listing, the component address and
+the declared type beside one property read. A head that only restates the rows is not printed.
+
+What no command prints: advice naming another command or another flag, explanations of what a
+command is for, comparisons with what the editor UI would do, morals about what might go wrong,
+counters derivable from the lines beside them, and the routine-outcome markers `ok` and `undo=1`.
+
+There is one output format. `--json` was removed whole — the option, the flag parsing, the
+presenter's option parameter, its structural field and its render branch. `asset get --field` stays:
+that is a text escape hatch rather than a format. `cocos instances` gained a `surface` column, which
+is the one field `--json` opened on its own.
+
+The ten `render/*` formatters are internal to the presenter: nothing outside `render/` imports
 them.
 
 **Undo brackets.** `withUndoBracket(client, nodeUuid, write)` (`cli/src/undo-bracket.ts`) wraps a
@@ -350,8 +379,8 @@ all, so they answer while the editor is busy. Two facts shape them, both from th
 from any typing: an entry is a header line plus the stack frames under it — 84% of the lines are
 frames — so the severity is read off the header and `--level error` carries the frames of a real
 error with it; and the editor writes CRLF, so `cli/src/log/file.ts` splits the text on CRLF as
-well as LF (checked live 2026-08-21: without it every line reached `--json` with a trailing carriage
-return and a `$`-anchored `--regex` search matched nothing).
+well as LF (checked live 2026-08-21: without it every line kept a trailing carriage return and a
+`$`-anchored `--regex` search matched nothing).
 
 ## Prefab Linkage
 
@@ -409,7 +438,7 @@ rendered empty.
    one place that resolves the connection, closes it in every branch (success or thrown), and turns
    a thrown `Error` into `process.exitCode = EXIT.FAILED` on `stderr`. A command answers a `Report`
    (`cli/src/render/present.ts`); it assembles neither stream nor the exit code, and never calls
-   `process.stdout.write` itself. A `--json` option is handed to `withClient` as its third argument.
+   `process.stdout.write` itself.
    A command that asks the driver nothing takes no client: its body is `(spec) => Promise<Report>`,
    its group is registered against `resolveProject` rather than `resolveClient`, and the action hands
    it to `withProject(resolve, hello => xxx({ projectPath: hello.projectPath, ... }))`, which does
@@ -495,8 +524,8 @@ driver process is what has to reload, and only a restart of the editor reloads i
 
 Then check that the restart carried the new bundle. `cocos instances` prints the editor's pid, which
 is a different number after a restart; when the change adds or removes a method,
-`cocos instances --json` also carries `surfaceChecksum`, which moves with the method list. When the
-change touches neither list, the changed behaviour itself is the check.
+`cocos instances` also prints a `surface` column carrying `surfaceChecksum`, which moves with the
+method list. When the change touches neither list, the changed behaviour itself is the check.
 
 A write-path change is only checked once the scene has been saved and Ctrl+Z tried.
 

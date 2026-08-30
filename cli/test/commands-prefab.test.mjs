@@ -61,7 +61,7 @@ const project = (extra = {}) => new MemoryDriver({
 test('dump reaches the scene with the uuid the db:// url resolves to', async () => {
     const driver = project();
     const output = present(await prefabDump(driver, { asset: 'db://assets/props/rifle.prefab' }));
-    assert.match(output.stderr, /Rifle {2}nodes: 2/);
+    assert.equal(output.stderr, undefined);
     assert.match(output.stdout, /Barrel/);
     assert.equal(driver.calls.find(call => call.name === 'dumpPrefabAsset').args[0], 'u-rifle');
 });
@@ -83,9 +83,9 @@ test('instantiate puts the node under the named parent as a linked instance', as
     const output = present(await prefabInstantiate(driver, {
         asset: 'db://assets/props/rifle.prefab', parent: 'Environment', name: 'Rifle'
     }));
-    assert.match(output.stdout, /^ok {2}Rifle from db:\/\/assets\/props\/rifle\.prefab/);
-    assert.match(output.stdout, /at Environment\/Rifle$/);
-    assert.match(output.stderr, /linked to u-rifle/);
+    assert.match(output.stdout, /^Rifle from db:\/\/assets\/props\/rifle\.prefab/);
+    assert.match(output.stdout, /at Environment\/Rifle/);
+    assert.match(output.stdout, /linked to u-rifle/);
     assert.ok(driver.uuidOf('Environment/Rifle'));
 });
 
@@ -97,10 +97,11 @@ test('a node the editor hung elsewhere is FAILED, and the tail names the path it
     const output = present(await prefabInstantiate(driver, {
         asset: 'db://assets/ui/probe.prefab', parent: 'Environment', name: 'Probe'
     }));
-    assert.match(output.stdout, /^FAILED {2}Probe from db:\/\/assets\/ui\/probe\.prefab/);
-    assert.match(output.stdout, /at Environment\/Canvas\/Probe$/);
+    assert.equal(output.stdout, undefined);
+    assert.match(output.stderr, /^FAILED {2}Probe from db:\/\/assets\/ui\/probe\.prefab/);
+    assert.match(output.stderr, /at Environment\/Canvas\/Probe/);
     assert.match(output.stderr, /asked for under Environment.+cc\.UITransform/s);
-    assert.equal(output.failed, true);
+    assert.equal(output.exitCode, 1);
     assert.ok(driver.uuidOf('Environment/Canvas/Probe'));
 });
 
@@ -108,7 +109,7 @@ test('a node asked for at the scene root and hung under a Canvas is FAILED too',
     const output = present(await prefabInstantiate(project(), {
         asset: 'db://assets/ui/probe.prefab', name: 'Probe'
     }));
-    assert.match(output.stdout, /^FAILED/);
+    assert.match(output.stderr, /^FAILED/);
     assert.match(output.stderr, /asked for under the scene root/);
 });
 
@@ -116,8 +117,8 @@ test('a node that stayed at the scene root is not read as moved', async () => {
     const output = present(await prefabInstantiate(project(), {
         asset: 'db://assets/props/rifle.prefab', name: 'Rifle'
     }));
-    assert.match(output.stdout, /^ok/);
-    assert.match(output.stdout, /at Rifle$/);
+    assert.match(output.stdout, /^Rifle from/);
+    assert.match(output.stdout, /at Rifle {2}/);
 });
 
 // `create-node` answers before the node is in the scene, so the uuid it names is not itself proof.
@@ -127,7 +128,7 @@ test('a uuid the scene never shows is FAILED rather than reported as placed', as
     const output = present(await prefabInstantiate(driver, {
         asset: 'db://assets/props/rifle.prefab', parent: 'Environment', poll: FAST
     }));
-    assert.match(output.stdout, /^FAILED/);
+    assert.match(output.stderr, /^FAILED/);
     assert.match(output.stderr, /no such node is in the scene/);
 });
 
@@ -147,8 +148,8 @@ test('--unlink asks for the flat copy and the line says the link was not expecte
     const output = present(await prefabInstantiate(driver, {
         asset: 'db://assets/props/rifle.prefab', unlink: true
     }));
-    assert.match(output.stdout, /^ok/);
-    assert.match(output.stderr, /no link by request/);
+    assert.equal(output.exitCode, 0);
+    assert.match(output.stdout, /no link by request/);
     assert.equal(driver.calls.find(call => call.name === 'scene.createNode').args[0].unlinkPrefab, true);
 });
 
@@ -182,7 +183,7 @@ test('create writes the asset the editor serializer produced, under the folder n
     const output = present(await prefabCreate(driver, {
         target: 'Environment', savePath: 'db://assets/props'
     }));
-    assert.match(output.stdout, /^ok {2}Environment written to db:\/\/assets\/props\/Environment\.prefab/);
+    assert.match(output.stdout, /^Environment written to db:\/\/assets\/props\/Environment\.prefab/);
     const written = driver.calls.find(call => call.name === 'assetDb.createAsset');
     assert.equal(written.args[0], 'db://assets/props/Environment.prefab');
     assert.equal(written.args[1], '[serialized Environment]');
@@ -204,8 +205,8 @@ test('an asset the database never gained is FAILED rather than a quiet ok', asyn
     const output = present(await prefabCreate(driver, {
         target: 'Environment', savePath: 'db://assets/props'
     }));
-    assert.equal(output.stdout.split('  ')[0], 'FAILED');
-    assert.equal(output.failed, true);
+    assert.equal(output.stderr.split('  ')[0], 'FAILED');
+    assert.equal(output.exitCode, 1);
 });
 
 const instance = (prefab = { asset: 'u-rifle', recordsOverrides: true }) => new MemoryDriver({
@@ -215,7 +216,7 @@ const instance = (prefab = { asset: 'u-rifle', recordsOverrides: true }) => new 
 
 test('info names the asset, the fileId and whether a save keeps the link', async () => {
     const output = present(await prefabInfo(instance(), { target: 'Environment/Rifle' }));
-    assert.match(output.stdout, /^ok {2}Environment\/Rifle {2}prefab u-rifle/);
+    assert.match(output.stdout, /^Environment\/Rifle {2}prefab u-rifle/);
     assert.match(output.stdout, /instance root/);
     assert.match(output.stdout, /persisted=true/);
 });
@@ -227,7 +228,7 @@ test('a node inside the instance is named as inside it rather than as its root',
 
 test('a node tracking no prefab says so instead of reporting an empty linkage', async () => {
     const output = present(await prefabInfo(instance(), { target: 'Environment' }));
-    assert.match(output.stdout, /^ok {2}Environment is not linked to a prefab/);
+    assert.equal(output.stdout, 'Environment is not linked to a prefab');
 });
 
 test('overrides lists what the instance holds on top of its asset', async () => {
@@ -236,8 +237,9 @@ test('overrides lists what the instance holds on top of its asset', async () => 
         target: 'Environment/Rifle/Barrel', name: 'Muzzle', poll: { timeoutMs: 30, intervalMs: 5 }
     });
     const output = present(await prefabOverrides(driver, { target: 'Environment/Rifle' }));
+    assert.match(output.stdout, /^prefab: u-rifle$/m);
     assert.match(output.stdout, /_name/);
-    assert.match(output.stderr, /1/);
+    assert.equal(output.stderr, undefined);
 });
 
 test('rm-override takes one record out and says how many are left', async () => {
@@ -249,7 +251,7 @@ test('rm-override takes one record out and says how many are left', async () => 
     const output = present(await prefabRemoveOverride(driver, {
         target: 'Environment/Rifle', property: '_name'
     }));
-    assert.match(output.stdout, /^ok {2}override _name removed from Environment\/Rifle {2}remaining: 1/);
+    assert.match(output.stdout, /^override _name removed from Environment\/Rifle {2}remaining: 1/);
 });
 
 test('a property with no override on the instance is refused rather than reported removed', async () => {
@@ -260,7 +262,7 @@ test('a property with no override on the instance is refused rather than reporte
 
 test('apply names the asset the instance was written into', async () => {
     const output = present(await prefabApply(instance(), { target: 'Environment/Rifle' }));
-    assert.match(output.stdout, /^ok {2}Rifle written into prefab u-rifle {2}accepted=true/);
+    assert.match(output.stdout, /^Rifle written into prefab u-rifle {2}accepted=true/);
 });
 
 // The editor answers `undefined` for these often enough that a silent `accepted=false` would be a
@@ -274,7 +276,7 @@ test('an editor that said nothing about accepting is not reported as having refu
 
 test('revert names the asset the instance was returned to', async () => {
     const output = present(await prefabRevert(instance(), { target: 'Environment/Rifle' }));
-    assert.match(output.stdout, /^ok {2}Rifle returned to prefab u-rifle {2}accepted=true/);
+    assert.match(output.stdout, /^Rifle returned to prefab u-rifle {2}accepted=true/);
 });
 
 test('a node carrying no instance is refused by both apply and revert', async () => {

@@ -39,10 +39,10 @@ test('a write is wrapped in an undo bracket', async () => {
 test('the result arrives on stdout as a report rather than as a raw object', async () => {
     const output = await setOutput(new MemoryDriver(spriteScene()),
         { node: 'Canvas/Bg', component: 'Sprite', property: 'color', value: '#ffffff' });
-    assert.match(output.stdout, /^ok/);
-    assert.match(output.stdout, /cc\.Sprite\.color/);
+    assert.match(output.stdout, /^cc\.Sprite\.color/);
     assert.match(output.stdout, /persisted=true/);
-    assert.equal(output.failed, false);
+    assert.equal(output.stderr, undefined);
+    assert.equal(output.exitCode, 0);
 });
 
 test('a write accepts the prefixed spelling and names the registered class', async () => {
@@ -71,9 +71,9 @@ test('the serializer emits a different value — persisted=false and a non-zero 
     const driver = new MemoryDriver(spriteScene({ serialized: { color: { r: 0, g: 0, b: 0, a: 255 } } }));
     const output = await setOutput(driver,
         { node: 'Canvas/Bg', component: 'Sprite', property: 'color', value: '#ffffff' });
-    assert.match(output.stdout, /persisted=false/);
-    assert.equal(output.stdout.split('  ')[0], 'UNPERSISTED');
-    assert.equal(output.failed, true);
+    assert.match(output.stderr, /persisted=false/);
+    assert.equal(output.stderr.split('  ')[0], 'UNPERSISTED');
+    assert.equal(output.exitCode, 4);
 });
 
 test('the serializer knows the property only under its backing-field name — both tries, found', async () => {
@@ -107,17 +107,17 @@ const castShadow = { node: 'Bullet', component: 'cc.MeshRenderer', property: 'sh
 test('a write finds the override the editor recorded under the backing field', async () => {
     const output = await setOutput(
         instancedRenderer({ componentOverrides: { _shadowCastingMode: ['_shadowCastingMode'] } }), castShadow);
-    assert.match(output.stdout, /^ok {2}cc\.MeshRenderer\.shadowCastingMode = 1/);
+    assert.match(output.stdout, /^cc\.MeshRenderer\.shadowCastingMode = 1/);
     assert.match(output.stdout, /persisted=true/);
     assert.match(output.stdout, /_shadowCastingMode/);
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 0);
 });
 
 test('the backing field agreeing with the asset carries nothing, so the write stays UNPERSISTED', async () => {
     const output = await setOutput(
         instancedRenderer({ componentOverrides: { _shadowCastingMode: [] } }), castShadow);
-    assert.equal(output.stdout.split('  ')[0], 'UNPERSISTED');
-    assert.equal(output.failed, true);
+    assert.equal(output.stderr.split('  ')[0], 'UNPERSISTED');
+    assert.equal(output.exitCode, 4);
 });
 
 test('a node without the requested property gives a refusal naming the properties it has', async () => {
@@ -149,8 +149,8 @@ test('a node path reaches the scene as a resolved uuid rather than as the path s
 
     const plan = driver.calls.find(call => call.name === 'resolveComponentReference');
     assert.equal(plan.args[0].targetUuid, hero);
-    assert.match(output.stdout, /^ok/);
-    assert.equal(output.failed, false);
+    assert.match(output.stdout, /^Npc\.target/);
+    assert.equal(output.exitCode, 0);
 });
 
 test('a reference goes to the editor as a dump carrying a uuid, not as the raw --value', async () => {
@@ -192,8 +192,9 @@ test('a uuid absent from the scene is refused by the scene, and the slot stays u
 
     const output = await setOutput(driver,
         { node: 'Canvas/Bg', component: 'Npc', property: 'target', value: 'zZzZzZzZzZzZzZzZzZzZzZ' });
-    assert.equal(output.stdout.split('  ')[0], 'FAILED');
-    assert.equal(output.failed, true);
+    assert.equal(output.stdout, undefined);
+    assert.equal(output.stderr.split('  ')[0], 'FAILED');
+    assert.equal(output.exitCode, 1);
     assert.equal(driver.calls.filter(call => call.name === 'scene.setProperty').length, writesBefore);
     assert.equal(targetOf(driver), hero);
 });
@@ -238,7 +239,7 @@ test('add names the class the engine registered, not the spelling that was typed
     const output = present(await componentAdd(driver, {
         node: 'Guard', component: 'Camera', poll: FAST
     }));
-    assert.match(output.stdout, /^ok {2}cc\.Camera added to Guard/);
+    assert.equal(output.stdout, 'cc.Camera added to Guard');
     assert.ok(driver.componentsOf(driver.uuidOf('Guard')).some(one => one.type === 'cc.Camera'));
 });
 
@@ -253,7 +254,7 @@ test('add names the class asked for, not the dependency attached ahead of it', a
     const output = present(await componentAdd(driver, {
         node: 'Guard', component: 'cc.Sprite', poll: FAST
     }));
-    assert.match(output.stdout, /^ok {2}cc\.Sprite added to Guard/);
+    assert.equal(output.stdout, 'cc.Sprite added to Guard');
 });
 
 test('an add no spelling of which names what appeared is UNVERIFIED, naming what did', async () => {
@@ -261,10 +262,11 @@ test('an add no spelling of which names what appeared is UNVERIFIED, naming what
     const output = present(await componentAdd(driver, {
         node: 'Guard', component: '2f3aRk1', poll: FAST
     }));
-    assert.equal(output.stdout,
+    assert.equal(output.stdout, undefined);
+    assert.equal(output.stderr,
         'UNVERIFIED  2f3aRk1 added to Guard  the node gained cc.UITransform, cc.Sprite'
         + ', nothing named 2f3aRk1 or cc.2f3aRk1');
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 3);
 });
 
 test('a class already on the node is said to be already there rather than added twice', async () => {
@@ -289,7 +291,7 @@ test('rm reaches the editor with the component uuid the owner listing named', as
     const nodeUuid = driver.uuidOf('Guard');
     const componentUuid = driver.componentsOf(nodeUuid)[0].uuid;
     const output = present(await componentRemove(driver, { node: 'Guard', component: 'cc.Sprite' }));
-    assert.match(output.stdout, /^ok {2}cc\.Sprite removed from Guard/);
+    assert.equal(output.stdout, 'cc.Sprite removed from Guard');
     assert.equal(driver.calls.find(call => call.name === 'scene.removeComponent').args[0].uuid,
         componentUuid);
     assert.equal(driver.componentsOf(nodeUuid).length, 0);
@@ -304,14 +306,34 @@ test('a class the node does not carry is refused, naming what it does carry', as
 test('get reads the properties of a component the way the inspector holds them', async () => {
     const output = present(await componentGet(new MemoryDriver(spriteScene()),
         { node: 'Canvas/Bg', component: 'Sprite' }));
+    assert.match(output.stdout, /^cc\.Sprite on Canvas\/Bg/);
     assert.match(output.stdout, /color/);
-    assert.match(output.stderr, /cc\.Sprite/);
+    assert.equal(output.stderr, undefined);
 });
 
-test('--prop prints that one value bare, for a shell to read', async () => {
+// The declared type is what a caller has to know to write the value back, and the value line does
+// not carry it.
+test('--prop prints the value under the address and the type it is declared with', async () => {
     const output = present(await componentGet(new MemoryDriver(spriteScene()),
         { node: 'Canvas/Bg', component: 'Sprite', property: 'color' }));
-    assert.equal(output.stdout, '#ffffffff');
+    assert.equal(output.stdout, 'cc.Sprite.color  cc.Color\n#ffffffff');
+});
+
+// Which of the two was read is the caller's next question, and neither the value nor the listing
+// answers it.
+test('a node carrying two components of the class warns that the first was read', async () => {
+    const driver = new MemoryDriver({
+        nodes: [{ name: 'Canvas', children: [{ name: 'Bg', components: [
+            { type: 'cc.Sprite', props: { color: white() } },
+            { type: 'cc.Sprite', props: { color: white() } }
+        ] }] }]
+    });
+    for (const property of [undefined, 'color']) {
+        const output = present(await componentGet(
+            driver, { node: 'Canvas/Bg', component: 'Sprite', property }));
+        assert.deepEqual(output.warnings,
+            ['the node carries 2 components of cc.Sprite, and the first was read']);
+    }
 });
 
 test('a property the component does not declare is refused, naming the ones it has', async () => {
@@ -340,7 +362,7 @@ test('moving an element forward puts it where the offset asked and reports the n
     const output = present(await componentArrayMove(driver,
         { node: 'Hero', component: 'ClipBands', property: 'bands', index: 0, offset: 1 }));
     assert.deepEqual(bandsOf(driver), [2, 1, 3]);
-    assert.match(output.stdout, /^ok/);
+    assert.match(output.stdout, /^ClipBands\.bands/);
     assert.match(output.stdout, /element 0 moved to 1/);
 });
 
@@ -401,7 +423,7 @@ const resettable = () => new MemoryDriver({
 
 test('reset answers for the properties whose value moved, and for no others', async () => {
     const output = present(await componentReset(resettable(), { node: 'Canvas/Bg', component: 'Sprite' }));
-    assert.match(output.stdout, /^ok {2}cc\.Sprite\.sizeMode = 0/);
+    assert.match(output.stdout, /^cc\.Sprite\.sizeMode = 0/);
     assert.doesNotMatch(output.stdout, /color/);
 });
 
@@ -410,7 +432,7 @@ test('a component already at its defaults says so rather than listing nothing', 
     await componentReset(driver, { node: 'Canvas/Bg', component: 'Sprite' });
     const output = present(await componentReset(driver, { node: 'Canvas/Bg', component: 'Sprite' }));
     assert.match(output.stdout, /nothing to write/);
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 0);
 });
 
 // Checked live on a prefab instance: `reset-component` moved the value and recorded no override,
@@ -426,8 +448,8 @@ test('a reset inside an instance that records no override is UNPERSISTED', async
         }]
     });
     const output = present(await componentReset(driver, { node: 'Hero', component: 'Health' }));
-    assert.match(output.stdout, /^UNPERSISTED {2}Health\.maxHp = 1/);
-    assert.equal(output.failed, true);
+    assert.match(output.stderr, /^UNPERSISTED {2}Health\.maxHp = 1/);
+    assert.equal(output.exitCode, 4);
 });
 
 test('reset is wrapped in an undo bracket', async () => {
@@ -446,5 +468,5 @@ test('types lists what the editor offers to add, with the menu path it offers it
     const output = present(await componentTypes(driver));
     assert.match(output.stdout, /cc\.Camera/);
     assert.match(output.stdout, /Rendering\/Camera/);
-    assert.match(output.stderr, /components offered: 1/);
+    assert.equal(output.stderr, undefined);
 });

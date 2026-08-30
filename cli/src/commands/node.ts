@@ -183,7 +183,7 @@ export async function nodeSet(client: Driver, spec: SetSpec): Promise<Report> {
         target,
         writes: await judged(client, uuid, writes),
         undoNote,
-        note: [`${target} is a ${nodeType} node`, ...warnings].join('\n')
+        warnings
     };
 }
 
@@ -266,7 +266,9 @@ export async function nodeMove(client: Driver, spec: MoveSpec): Promise<Report> 
         target,
         writes: await judged(client, uuid, [write]),
         undoNote,
-        note: keepWorldTransform ? 'the world transform was kept, so the local one changed' : undefined
+        warnings: keepWorldTransform
+            ? ['the world transform was kept, so the local one changed']
+            : undefined
     };
 }
 
@@ -323,10 +325,8 @@ export async function nodeDuplicate(client: Driver, spec: DuplicateSpec): Promis
  * override instead — `prefab revert` drops every override the instance has, so it is the wrong
  * tool for one property.
  */
-const PREFAB_RESET_NOTE = 'the node is inside a prefab instance, and a reset writes the declared '
-    + 'class default there too, recorded as an override; what returns one property to the prefab\'s '
-    + `own value is 'cocos prefab rm-override <path> <stored-name>', and the value comes back on the `
-    + 'next load rather than at once'
+const PREFAB_RESET_NOTE = 'the node is inside a prefab instance, and the reset wrote the declared '
+    + "class default there rather than the prefab's own value, recorded as an override";
 
 /**
  * `name` and `active` are out because the editor's own node dump declares `default: null` for both,
@@ -406,28 +406,28 @@ export async function nodeReset(client: Driver, spec: ResetSpec): Promise<Report
         target: spec.target,
         writes: await judged(client, uuid, writes),
         undoNote,
-        note: await inPrefabInstance(client, uuid)
+        warnings: await prefabResetWarnings(client, uuid)
     };
 }
 
 /**
- * The note is advisory, so a scene that will not answer gets said out loud rather than read as a
- * node outside every instance — silence and `no` are different answers.
+ * A scene that will not answer gets said out loud rather than read as a node outside every
+ * instance — silence and `no` are different answers.
  */
-async function inPrefabInstance(client: Driver, uuid: string): Promise<string | undefined> {
+async function prefabResetWarnings(client: Driver, uuid: string): Promise<string[]> {
     const linkage = await client.scene.call('nodePrefabLinkage', uuid).catch(() => null);
     if (!linkage || linkage.success !== true) {
-        return 'the scene did not answer whether this node is inside a prefab instance';
+        return ['the scene did not answer whether this node is inside a prefab instance'];
     }
-    return linkage.data.linked ? PREFAB_RESET_NOTE : undefined;
+    return linkage.data.linked ? [PREFAB_RESET_NOTE] : [];
 }
 
 function requireResettable(property: string): ResettableProperty {
     const known = RESETTABLE.find(name => name === property);
     if (known) return known;
     if (UNRESETTABLE.some(name => name === property)) {
-        throw new Error(`the editor declares no default for '${property}', so a reset of it does `
-            + `nothing; write the value you want with 'cocos node set'`);
+        throw new Error(
+            `the editor declares no default for '${property}', so a reset of it does nothing`);
     }
     throw new Error(`a node has no resettable property '${property}'; it has: ${RESETTABLE.join(', ')}`);
 }
@@ -437,8 +437,8 @@ function requireResettable(property: string): ResettableProperty {
  * own property channel — the only path that can create the tracked target node — so no undo step
  * covers them.
  */
-const SOCKET_NOTE = 'a socket is written on the live component, outside the undo stack: Ctrl+Z does '
-    + 'not take it back, and the scene has to be saved for it to last';
+const SOCKET_WARNING = 'the socket was written on the live component, outside the undo stack: '
+    + 'Ctrl+Z does not take it back, and the scene has to be saved for it to last';
 
 export async function nodeSocketList(client: Driver, spec: { target: string }): Promise<Report> {
     const uuid = await resolveNode(client, spec.target);
@@ -467,7 +467,7 @@ export async function nodeSocketAdd(client: Driver, spec: SocketAddSpec): Promis
             `${added.targetName}  ${added.targetUuid}`,
             `sockets: ${added.socketCount}`
         ].join('  '),
-        note: SOCKET_NOTE
+        warnings: [SOCKET_WARNING]
     };
 }
 
@@ -482,7 +482,10 @@ export async function nodeSocketRemove(
         verdict: 'ok',
         summary: `socket removed  ${removed.bonePath}  target ${removed.removedTargetUuid || 'none'}`
             + `  sockets: ${removed.socketCount}`,
-        note: `the target node went with it, and so did anything parented under it; ${SOCKET_NOTE}`
+        warnings: [
+            'the target node was destroyed with the socket, and so was anything parented under it',
+            SOCKET_WARNING
+        ]
     };
 }
 
@@ -573,9 +576,8 @@ export function registerNode(program: Command, resolve: () => Promise<Resolved>)
     socket
         .command('ls <path>')
         .description('the sockets on a node and what hangs off each')
-        .option('--json', 'print the structural form instead of text')
-        .action((target: string, options: { json?: boolean }) =>
-            withClient(resolve, client => nodeSocketList(client, { target }), { json: options.json }));
+        .action((target: string) =>
+            withClient(resolve, client => nodeSocketList(client, { target })));
 
     socket
         .command('add <path> <bone>')

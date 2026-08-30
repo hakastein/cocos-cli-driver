@@ -19,7 +19,7 @@ export function projectLogPath(projectPath: string): string {
 
 /**
  * The editor writes the log with CRLF on Windows. A carriage return left on the end of every line
- * reaches `--json` verbatim and makes a `$`-anchored `--regex` search match nothing.
+ * makes a `$`-anchored `--regex` search match nothing.
  */
 export function splitLogLines(text: string): string[] {
     return text.split(/\r?\n/);

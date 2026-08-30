@@ -36,7 +36,7 @@ test('status names the worker and the rows the Build panel holds', async () => {
 test('a worker that is not up is a reading, not a failure of the command', async () => {
     const output = present(await buildStatus(driverWith({ ready: false, tasks: [] })));
     assert.match(output.stdout, /worker not ready/);
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 0);
 });
 
 test('the only task of a platform is rebuilt in place, keeping its id', async () => {
@@ -51,22 +51,22 @@ test('the only task of a platform is rebuilt in place, keeping its id', async ()
 
 test('a build the exit code and the task state both call a success is ok', async () => {
     const output = present(await buildRun(driverWith({ tasks: [clone(SHOWCASE)] }), { platform: 'web-mobile' }));
-    assert.match(output.stdout, /^ok {2}web-mobile {2}BUILD_SUCCESS\(36\)/m);
-    assert.equal(output.failed, false);
+    assert.match(output.stdout, /^web-mobile {2}BUILD_SUCCESS\(36\)/m);
+    assert.equal(output.exitCode, 0);
 });
 
 test('an exit code that is not BUILD_SUCCESS fails the command', async () => {
     const driver = driverWith({ tasks: [clone(SHOWCASE)], exitCode: 34, finalState: 'failure' });
     const output = present(await buildRun(driver, { platform: 'web-mobile' }));
-    assert.match(output.stdout, /^FAILED {2}web-mobile {2}BUILD_FAILED\(34\)/m);
-    assert.equal(output.failed, true);
+    assert.match(output.stderr, /^FAILED {2}web-mobile {2}BUILD_FAILED\(34\)/m);
+    assert.equal(output.exitCode, 1);
 });
 
 test('a platform with two tasks refuses to pick, and builds nothing', async () => {
     const driver = driverWith({ tasks: [clone(SHOWCASE), clone(DEBUG)] });
     const output = present(await buildRun(driver, { platform: 'web-mobile' }));
 
-    assert.match(output.stdout, /^FAILED {2}web-mobile has 2 build tasks/m);
+    assert.match(output.stderr, /^FAILED {2}web-mobile has 2 build tasks/m);
     assert.match(output.stderr, /1785322023936/);
     assert.match(output.stderr, /1785322023937/);
     assert.equal(built(driver).length, 0);
@@ -82,7 +82,7 @@ test('a task id belonging to another platform says so rather than building it', 
     const driver = driverWith({ tasks: [clone(SHOWCASE), clone(ANDROID)] });
     const output = present(await buildRun(driver, { platform: 'web-mobile', taskId: ANDROID.id }));
 
-    assert.match(output.stdout, /FAILED/);
+    assert.match(output.stderr, /^FAILED/);
     assert.match(output.stderr, /android task, not web-mobile/);
     assert.equal(built(driver).length, 0);
 });
@@ -91,7 +91,7 @@ test('an override that disagrees with the saved task refuses and names both valu
     const driver = driverWith({ tasks: [clone(DEBUG)] });
     const output = present(await buildRun(driver, { platform: 'web-mobile', debug: false }));
 
-    assert.match(output.stdout, /^FAILED {2}building web-mobile would overwrite/m);
+    assert.match(output.stderr, /^FAILED {2}building web-mobile would overwrite/m);
     assert.match(output.stderr, /debug=true/);
     assert.match(output.stderr, /debug=false/);
     assert.equal(built(driver).length, 0);
@@ -109,7 +109,9 @@ test('--allow-task-edit lets the overwrite through, and the report names what it
     const report = await buildRun(driver, { platform: 'web-mobile', debug: false, allowTaskEdit: true });
 
     assert.deepEqual(report.run.modifiedTaskSettings, ['debug']);
-    assert.match(present(report).stderr, /wrote onto the task: debug/);
+    const output = present(report);
+    assert.equal(output.warnings.length, 1);
+    assert.match(output.warnings[0], /wrote onto task 1785322023937: debug/);
 });
 
 test('the edit really lands on the task — the next read gets the new value back', async () => {
@@ -136,7 +138,7 @@ test('--new-task and --task contradict each other and neither wins', async () =>
     const driver = driverWith({ tasks: [clone(SHOWCASE)] });
     const output = present(await buildRun(driver, { platform: 'web-mobile', newTask: true, taskId: SHOWCASE.id }));
 
-    assert.match(output.stdout, /FAILED/);
+    assert.match(output.stderr, /^FAILED/);
     assert.equal(built(driver).length, 0);
 });
 
@@ -155,18 +157,18 @@ test('a wait that runs out answers TIMEOUT without asking the driver anything mo
     const driver = driverWith({ tasks: [clone(SHOWCASE)], buildTakesMs: 50 });
     const output = present(await buildRun(driver, { platform: 'web-mobile', timeoutMs: 1 }));
 
-    assert.match(output.stdout, /^TIMEOUT {2}web-mobile {2}no exit code {2}state=unknown/m);
-    assert.match(output.stderr, /still running in the editor/);
-    assert.equal(output.failed, true);
+    assert.match(output.stderr, /^TIMEOUT {2}web-mobile {2}no exit code {2}state=unknown/m);
+    assert.equal(output.stdout, undefined);
+    assert.equal(output.exitCode, 5);
     assert.equal(driver.calls.filter(call => call.name === 'builder.queryTask').length, 0);
-    assert.match(output.stdout, /^task 1785322023936 "SHOWCASE"/m);
+    assert.match(output.stderr, /^task 1785322023936 "SHOWCASE"/m);
 });
 
 test('a worker that is not ready is refused before anything is written', async () => {
     const driver = driverWith({ ready: false, tasks: [clone(SHOWCASE)] });
     const output = present(await buildRun(driver, { platform: 'web-mobile' }));
 
-    assert.match(output.stdout, /^FAILED {2}the build worker is not ready/m);
+    assert.match(output.stderr, /^FAILED {2}the build worker is not ready/m);
     assert.equal(built(driver).length, 0);
 });
 

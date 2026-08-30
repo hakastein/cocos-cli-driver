@@ -3,10 +3,7 @@ import assert from 'node:assert/strict';
 
 import * as r from '../src/render/scene.ts';
 
-const {
-    renderComponentOwners, componentOwnersSummary, renderSceneDirty, sceneDirtyNote,
-    renderMissingScripts
-} = r;
+const { renderComponentOwners, componentOwnersHead, renderSceneDirty, renderMissingScripts } = r;
 
 const owner = (over = {}) => ({
     nodePath: 'Characters/guard_1', nodeUuid: 'u-1', nodeName: 'guard_1',
@@ -41,10 +38,12 @@ test('a disabled component is marked apart from a disabled node', () => {
     assert.match(renderComponentOwners(owners([owner({ enabled: false })])), /\(component off\)/);
 });
 
-test('the summary carries both the hit count and how much was searched', () => {
-    const text = componentOwnersSummary(owners([owner()]));
-    assert.match(text, /owners 1/);
+// How much of the scene was searched is what says whether an empty answer means anything; the
+// owner rows carry neither that nor which scene they came from.
+test('the head names the scene searched and how much of it, not the row count', () => {
+    const text = componentOwnersHead(owners([owner()]));
     assert.match(text, /nodes scanned 391/);
+    assert.doesNotMatch(text, /owners 1/);
 });
 
 test('a scene matching disk says so and names the file', () => {
@@ -69,10 +68,14 @@ test('a scene whose path is unknown still renders instead of printing null', () 
         /path unknown/);
 });
 
-test('the reason the comparison could not run reaches the note', () => {
-    assert.equal(sceneDirtyNote({ differsFromDisk: false, scenePath: null, diffs: [], reason: 'no file' }),
-        'no file');
-    assert.equal(sceneDirtyNote({ differsFromDisk: false, scenePath: null, diffs: [] }), '');
+// A scene never written to disk differs from it with no diffs to show, so the reason is the whole
+// answer rather than a remark beside one.
+test('the reason a scene differs with nothing to show reaches the line', () => {
+    assert.match(
+        renderSceneDirty({
+            differsFromDisk: true, scenePath: null, diffs: [], reason: 'never written to disk'
+        }),
+        /never written to disk/);
 });
 
 test('a clean scene reports no dead components rather than an empty string', () => {

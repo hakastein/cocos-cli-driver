@@ -22,11 +22,14 @@ export function buildProgram(): Command {
     program
         .command('instances')
         .description('list the open editors')
-        .option('--json', 'print the structural form instead of text')
-        .action(async (options: { json?: boolean }) => {
+        .action(async () => {
             const found = await discover(probeAddress);
-            emit(present({ kind: 'instances', instances: found }, { json: options.json }));
-            process.exitCode = found.length ? EXIT.OK : EXIT.NO_EDITOR;
+            if (!found.length) {
+                process.stderr.write('FAILED  no open Cocos editor found\n');
+                process.exitCode = EXIT.NO_EDITOR;
+                return;
+            }
+            emit(present({ kind: 'instances', instances: found }));
         });
 
     registerScene(program, () => resolveClient(program.opts().project));
@@ -47,7 +50,7 @@ if (require.main === module) {
             return;
         }
         const message = error instanceof Error ? error.message : String(error);
-        process.stderr.write(message + '\n');
-        process.exitCode = EXIT.PROTOCOL;
+        process.stderr.write(`FAILED  ${message}\n`);
+        process.exitCode = EXIT.FAILED;
     });
 }

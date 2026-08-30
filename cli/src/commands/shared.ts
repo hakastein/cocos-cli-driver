@@ -3,7 +3,7 @@ import { EXIT } from '../exit.ts';
 import { gateRefusal, gateReport } from '../dialog-gate.ts';
 import type { DiskAnswer } from '../dialog-gate.ts';
 import { present } from '../render/present.ts';
-import type { CommandOutput, PresentOptions, Report } from '../render/present.ts';
+import type { CommandOutput, Report } from '../render/present.ts';
 import { raceTimeout } from '../settle.ts';
 import type { Resolved, ResolvedProject } from '../resolve.ts';
 
@@ -24,10 +24,11 @@ export async function unwrap<T>(
     return settled.data;
 }
 
-/** The only place a command's output reaches the process streams. */
+/** The only place a command's output reaches the process streams and the exit code. */
 export function emit(output: CommandOutput): void {
     if (output.stdout !== undefined) process.stdout.write(output.stdout + '\n');
     if (output.stderr !== undefined) process.stderr.write(output.stderr + '\n');
+    if (output.exitCode !== EXIT.OK) process.exitCode = output.exitCode;
 }
 
 /**
@@ -37,13 +38,12 @@ export function emit(output: CommandOutput): void {
  * branch, success or thrown.
  */
 export async function withClient(
-    resolve: () => Promise<Resolved>, run: (client: Driver) => Promise<Report>,
-    options?: PresentOptions
+    resolve: () => Promise<Resolved>, run: (client: Driver) => Promise<Report>
 ): Promise<void> {
     const resolved = await resolve();
     if (!resolved.ok) return noEditor(resolved.message);
     try {
-        await report(() => gated(resolved.client, run), options);
+        await report(() => gated(resolved.client, run));
     } finally {
         resolved.client.close();
     }
@@ -84,26 +84,27 @@ async function diskAnswer(client: Driver): Promise<DiskAnswer> {
 
 /** For a command that needs only which project is open: no connection is opened at all. */
 export async function withProject(
-    resolve: () => Promise<ResolvedProject>, run: (hello: Hello) => Promise<Report>,
-    options?: PresentOptions
+    resolve: () => Promise<ResolvedProject>, run: (hello: Hello) => Promise<Report>
 ): Promise<void> {
     const resolved = await resolve();
     if (!resolved.ok) return noEditor(resolved.message);
-    await report(() => run(resolved.hello), options);
+    await report(() => run(resolved.hello));
 }
 
 function noEditor(message: string): void {
-    process.stderr.write(message + '\n');
+    process.stderr.write(`FAILED  ${message}\n`);
     process.exitCode = EXIT.NO_EDITOR;
 }
 
-async function report(run: () => Promise<Report>, options?: PresentOptions): Promise<void> {
+/**
+ * A thrown error carries the same mark as a refusal that did reach a report: a log merging the two
+ * streams reads both the same way.
+ */
+async function report(run: () => Promise<Report>): Promise<void> {
     try {
-        const output = present(await run(), options);
-        emit(output);
-        if (output.failed) process.exitCode = EXIT.FAILED;
+        emit(present(await run()));
     } catch (error) {
-        process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n');
+        process.stderr.write(`FAILED  ${error instanceof Error ? error.message : String(error)}\n`);
         process.exitCode = EXIT.FAILED;
     }
 }

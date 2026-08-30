@@ -66,8 +66,10 @@ test('the exit codes tell a missing editor from a failed operation', () => {
     assert.equal(EXIT.OK, 0);
     assert.equal(EXIT.FAILED, 1);
     assert.equal(EXIT.USAGE, 2);
-    assert.equal(EXIT.NO_EDITOR, 3);
-    assert.equal(EXIT.PROTOCOL, 4);
+    assert.equal(EXIT.UNVERIFIED, 3);
+    assert.equal(EXIT.UNPERSISTED, 4);
+    assert.equal(EXIT.TIMEOUT, 5);
+    assert.equal(EXIT.NO_EDITOR, 6);
 });
 
 test('backslashes in a candidate path are normalized while matching', () => {

@@ -2,23 +2,21 @@ import type {
     ComponentOwnerReport, Hello, MissingScriptDump, PrefabAssetDump, PrefabOverrideReport,
     SceneDirtyReport, SkeletalSocketList
 } from '@cocos-cli/shared';
-import { verdictFailed } from './verdict.ts';
+import { verdictExit } from './verdict.ts';
 import {
-    assetField, assetListSummary, assetNote, assetUsersSummary, assetVerdict, renderAssetInfo,
-    renderAssetList, renderAssetReport, renderAssetUsers
+    assetField, assetListHead, assetVerdict, renderAssetInfo, renderAssetList, renderAssetReport,
+    renderAssetUsers
 } from './asset.ts';
-import {
-    buildRunSummary, buildVerdict, builderStatusSummary, renderBuildRun, renderBuilderStatus
-} from './build.ts';
-import { logSearchSummary, logTailSummary, renderLogEntries, renderLogMatches } from './log.ts';
-import { classListSummary, renderClassList, renderSockets, socketsSummary } from './component.ts';
-import { renderWrites, undoDetail, writesVerdict } from './report.ts';
+import { buildRunHead, buildVerdict, buildWarnings, renderBuildRun, renderBuilderStatus } from './build.ts';
+import { logSearchHead, logTailHead, renderLogEntries, renderLogMatches } from './log.ts';
+import { renderClassList, renderSockets, socketsHead } from './component.ts';
+import { renderWrites, writesVerdict } from './report.ts';
 import { renderTree } from './tree.ts';
 import { renderInstances } from './instances.ts';
 import { formatReading, renderComponentReading } from './property.ts';
-import { prefabDumpSummary, prefabOverridesSummary, renderPrefabDump, renderPrefabOverrides } from './prefab.ts';
+import { prefabOverridesHead, renderPrefabDump, renderPrefabOverrides } from './prefab.ts';
 import {
-    componentOwnersSummary, renderComponentOwners, renderMissingScripts, renderSceneDirty, sceneDirtyNote
+    componentOwnersHead, renderComponentOwners, renderMissingScripts, renderSceneDirty
 } from './scene.ts';
 import type { Verdict } from './verdict.ts';
 import type { AssetReport } from '../asset/settle.ts';
@@ -37,18 +35,19 @@ import type { ReferenceLabel } from '../property/reference-index.ts';
 export type { RenderedWrite } from './report.ts';
 export type { DumpNode } from './tree.ts';
 
+/**
+ * A non-empty `stderr` means the call did not succeed, without exception: on the way out a report
+ * takes one stream or the other, never both.
+ */
 export interface CommandOutput {
     stdout?: string;
     stderr?: string;
-    /** The command ran and its outcome is not a success: see `verdictFailed`. */
-    failed?: boolean;
+    /** Carried as a list so a test asks what was warned about rather than grepping the text. */
+    warnings: string[];
+    exitCode: number;
 }
 
-export interface PresentOptions {
-    json?: boolean;
-}
-
-/** The node and component a report is about, spelled the way `--json` names them. */
+/** The node and component a report is about. */
 export interface ComponentAddress {
     nodePath: string;
     nodeUuid: string;
@@ -62,15 +61,21 @@ export interface ComponentAddress {
  */
 export type Report =
     /** An outcome with no structure beyond one line: a verdict and a free-text tail. */
-    | { kind: 'action'; verdict: Verdict; summary: string; note?: string; undoNote?: string | null }
+    | {
+        kind: 'action'; verdict: Verdict; summary: string; warnings?: string[];
+        undoNote?: string | null;
+    }
     /** Every write of one undo bracket, each judged on whether a save carries it. */
-    | { kind: 'write'; target: string; writes: RenderedWrite[]; undoNote: string | null; note?: string }
-    | { kind: 'asset'; asset: AssetReport; timeoutMs: number; note?: string }
+    | {
+        kind: 'write'; target: string; writes: RenderedWrite[]; undoNote: string | null;
+        warnings?: string[];
+    }
+    | { kind: 'asset'; asset: AssetReport; warnings?: string[] }
     | { kind: 'assetInfo'; asset: AssetRecord; field?: string }
     | { kind: 'assetList'; assets: AssetRecord[]; total: number }
     | { kind: 'assetUsers'; users: AssetUsers }
     /** The classes the scene's engine knows: under a base when one was named, the add menu when not. */
-    | { kind: 'classList'; classes: ClassEntry[]; base?: string }
+    | { kind: 'classList'; classes: ClassEntry[] }
     | { kind: 'nodeSockets'; sockets: SkeletalSocketList }
     | { kind: 'sceneTree'; nodes: DumpNode[]; options: TreeOptions }
     | { kind: 'sceneOwners'; owners: ComponentOwnerReport }
@@ -78,11 +83,12 @@ export type Report =
     | { kind: 'sceneMissing'; missing: MissingScriptDump }
     | {
         kind: 'componentProperty'; address: ComponentAddress; reading: PropertyReading;
-        references: Map<string, ReferenceLabel>; note?: string;
+        references: Map<string, ReferenceLabel>; unread?: string; warnings?: string[];
     }
     | {
         kind: 'componentProperties'; address: ComponentAddress; readings: PropertyReading[];
-        hidden: string[]; references: Map<string, ReferenceLabel>; note?: string;
+        hidden: string[]; references: Map<string, ReferenceLabel>; unread?: string;
+        warnings?: string[];
     }
     | { kind: 'prefabDump'; dump: PrefabAssetDump }
     | { kind: 'prefabOverrides'; overrides: PrefabOverrideReport }
@@ -99,30 +105,25 @@ export type Report =
 
 interface Rendered {
     verdict: Verdict;
+    /** The answer's own lines. */
     text: string;
-    /** What `--json` prints; its absence means the report has no structural form. */
-    json?: unknown;
-    note?: string;
+    /** A fact the answer's lines do not carry; the verdict word joins it. */
+    head?: string;
+    warnings?: string[];
+    /**
+     * Each line of the answer opens with the verdict of that line, so the report's own word is not
+     * printed above them again. A write batch is the only report shaped that way.
+     */
+    marksItsOwnLines?: boolean;
 }
 
 function joined(parts: Array<string | false | undefined>, separator = '  '): string {
     return parts.filter(part => part).join(separator);
 }
 
-function addressJson(address: ComponentAddress): Record<string, unknown> {
-    return {
-        node: { path: address.nodePath, uuid: address.nodeUuid },
-        component: {
-            className: address.choice.className, cid: address.choice.cid,
-            enabled: address.choice.enabled, index: address.choice.index
-        }
-    };
-}
-
-function referencesJson(index: Map<string, ReferenceLabel>): Record<string, ReferenceLabel> {
-    const references: Record<string, ReferenceLabel> = {};
-    for (const [uuid, label] of index) references[uuid] = label;
-    return references;
+/** A read that answered part of what was asked is not a success: unread data reads as absent data. */
+function readingVerdict(unread: string | undefined): Verdict {
+    return unread === undefined ? 'ok' : 'UNVERIFIED';
 }
 
 function render(report: Report): Rendered {
@@ -130,202 +131,168 @@ function render(report: Report): Rendered {
         case 'action':
             return {
                 verdict: report.verdict,
-                text: joined([
-                    `${report.verdict}  ${report.summary}`,
-                    report.undoNote !== undefined && undoDetail(report.undoNote)
-                ]),
-                note: report.note
+                head: report.summary,
+                text: '',
+                warnings: withUndo(report.warnings, report.undoNote)
             };
 
         case 'write':
             return {
                 verdict: writesVerdict(report.writes),
                 text: renderWrites(report),
-                note: report.note
+                marksItsOwnLines: true,
+                warnings: withUndo(report.warnings, report.undoNote)
             };
 
-        case 'asset':
-            return {
-                verdict: assetVerdict(report.asset),
-                text: renderAssetReport(report.asset),
-                note: joined([assetNote(report.asset, report.timeoutMs), report.note], '\n')
-            };
+        case 'asset': {
+            const { head, body } = renderAssetReport(report.asset);
+            return { verdict: assetVerdict(report.asset), head, text: body, warnings: report.warnings };
+        }
 
         case 'assetInfo':
             return report.field
                 ? { verdict: 'ok', text: assetField(report.asset, report.field) }
-                : { verdict: 'ok', text: renderAssetInfo(report.asset), json: report.asset };
+                : { verdict: 'ok', text: renderAssetInfo(report.asset) };
 
         case 'assetList':
             return {
                 verdict: 'ok',
-                text: renderAssetList(report.assets),
-                json: report.assets,
-                note: assetListSummary(report.assets.length, report.total)
+                head: assetListHead(report.assets.length, report.total),
+                text: renderAssetList(report.assets)
             };
 
         case 'assetUsers':
-            return {
-                verdict: 'ok',
-                text: renderAssetUsers(report.users),
-                json: report.users,
-                note: assetUsersSummary(report.users)
-            };
+            return { verdict: 'ok', text: renderAssetUsers(report.users) };
 
         case 'classList':
-            return {
-                verdict: 'ok',
-                text: renderClassList(report.classes),
-                json: report.classes,
-                note: classListSummary(report.classes.length, report.base)
-            };
+            return { verdict: 'ok', text: renderClassList(report.classes) };
 
         case 'nodeSockets':
             return {
                 verdict: 'ok',
-                text: renderSockets(report.sockets),
-                json: report.sockets,
-                note: socketsSummary(report.sockets)
+                head: socketsHead(report.sockets),
+                text: renderSockets(report.sockets)
             };
 
         case 'sceneTree':
             return {
                 verdict: 'ok',
-                text: report.nodes.length ? renderTree(report.nodes, report.options) : 'the scene is empty — no nodes',
-                note: `nodes: ${report.nodes.length}`
+                text: report.nodes.length
+                    ? renderTree(report.nodes, report.options)
+                    : 'the scene is empty — no nodes'
             };
 
         case 'sceneOwners':
             return {
                 verdict: 'ok',
-                text: renderComponentOwners(report.owners),
-                json: report.owners,
-                note: componentOwnersSummary(report.owners)
+                head: componentOwnersHead(report.owners),
+                text: renderComponentOwners(report.owners)
             };
 
         case 'sceneDirty':
-            return {
-                verdict: 'ok',
-                text: renderSceneDirty(report.dirty),
-                json: report.dirty,
-                note: sceneDirtyNote(report.dirty)
-            };
+            return { verdict: 'ok', text: renderSceneDirty(report.dirty) };
 
-        case 'sceneMissing': {
-            const verdict: Verdict = report.missing.entries.length ? 'FAILED' : 'ok';
+        case 'sceneMissing':
             return {
-                verdict,
-                text: renderMissingScripts(report.missing),
-                json: report.missing,
-                note: `${verdict}  dead components: ${report.missing.entries.length}`
+                verdict: report.missing.entries.length ? 'FAILED' : 'ok',
+                text: renderMissingScripts(report.missing)
             };
-        }
 
         case 'componentProperty': {
             const { address, reading, references } = report;
             return {
-                verdict: 'ok',
-                text: formatReading(reading, uuid => references.get(uuid)),
-                json: {
-                    ...addressJson(address), property: reading, references: referencesJson(references)
-                },
-                note: joined([
+                verdict: readingVerdict(report.unread),
+                head: joined([
                     `${address.choice.className}.${reading.name}  ${reading.type || 'type not declared'}`,
                     reading.differsFromDefault === true && 'differs from the default',
-                    reading.hiddenInInspector && 'the inspector does not draw it, the file holds it',
-                    report.note
-                ])
+                    reading.hiddenInInspector && 'hidden in the inspector'
+                ]),
+                text: joined([
+                    formatReading(reading, uuid => references.get(uuid)),
+                    report.unread
+                ], '\n'),
+                warnings: report.warnings
             };
         }
 
         case 'componentProperties': {
             const { address, readings, hidden, references } = report;
             return {
-                verdict: 'ok',
-                text: renderComponentReading(readings, uuid => references.get(uuid)),
-                json: {
-                    ...addressJson(address), properties: readings, hidden,
-                    references: referencesJson(references)
-                },
-                note: joined([
+                verdict: readingVerdict(report.unread),
+                head: joined([
                     `${address.choice.className} on ${address.nodePath}  enabled=${
                         address.choice.enabled === null ? 'unknown' : address.choice.enabled}`,
-                    `properties: ${readings.length}`,
-                    hidden.length > 0
-                        && `hidden: ${hidden.length} (internal fields and backing duplicates, each readable with --prop)`,
+                    hidden.length > 0 && `hidden: ${hidden.length}`,
                     readings.some(reading => reading.differsFromDefault === true)
-                        && '* — differs from the default',
-                    address.choice.sameClassCount > 1
-                        && `the node carries ${address.choice.sameClassCount} components of this class, the first was read`,
-                    report.note
-                ])
+                        && '* — differs from the default'
+                ]),
+                text: joined([
+                    renderComponentReading(readings, uuid => references.get(uuid)),
+                    report.unread
+                ], '\n'),
+                warnings: report.warnings
             };
         }
 
         case 'prefabDump':
-            return {
-                verdict: 'ok',
-                text: renderPrefabDump(report.dump),
-                json: report.dump,
-                note: prefabDumpSummary(report.dump)
-            };
+            return { verdict: 'ok', text: renderPrefabDump(report.dump) };
 
         case 'prefabOverrides':
             return {
                 verdict: 'ok',
-                text: renderPrefabOverrides(report.overrides),
-                json: report.overrides,
-                note: prefabOverridesSummary(report.overrides)
+                head: prefabOverridesHead(report.overrides),
+                text: renderPrefabOverrides(report.overrides)
             };
 
         case 'instances':
-            return {
-                verdict: 'ok',
-                text: renderInstances(report.instances),
-                json: report.instances
-            };
+            return { verdict: 'ok', text: renderInstances(report.instances) };
 
         case 'builderStatus':
-            return {
-                verdict: 'ok',
-                text: renderBuilderStatus(report.status),
-                json: report.status,
-                note: builderStatusSummary(report.status)
-            };
+            return { verdict: 'ok', text: renderBuilderStatus(report.status) };
 
         case 'buildRun':
             return {
                 verdict: buildVerdict(report.run),
+                head: buildRunHead(report.run),
                 text: renderBuildRun(report.run),
-                json: report.run,
-                note: buildRunSummary(report.run)
+                warnings: buildWarnings(report.run)
             };
 
         case 'logTail':
             return {
                 verdict: 'ok',
-                text: renderLogEntries(report.entries, report.detail),
-                json: { file: report.file, window: report.window, entries: report.entries },
-                note: logTailSummary(report.file, report.window, report.entries.length)
+                head: logTailHead(report.file, report.window, report.entries.length),
+                text: renderLogEntries(report.entries, report.detail)
             };
 
         case 'logSearch':
             return {
                 verdict: 'ok',
-                text: renderLogMatches(report.result),
-                json: { file: report.file, window: report.window, ...report.result },
-                note: logSearchSummary(report.file, report.window, report.result)
+                head: logSearchHead(report.file, report.window, report.result),
+                text: renderLogMatches(report.result)
             };
     }
 }
 
-export function present(report: Report, options: PresentOptions = {}): CommandOutput {
+function withUndo(warnings: string[] | undefined, undoNote: string | null | undefined): string[] {
+    const listed = warnings ? [...warnings] : [];
+    if (undoNote) listed.push(undoNote);
+    return listed;
+}
+
+export function present(report: Report): CommandOutput {
     const rendered = render(report);
+    const warnings = rendered.warnings || [];
+    const opener = rendered.marksItsOwnLines || rendered.verdict === 'ok'
+        ? rendered.head
+        : joined([rendered.verdict, rendered.head]);
+    const body = joined(
+        [opener, rendered.text, ...warnings.map(warning => `warning: ${warning}`)], '\n');
+
     return {
-        stdout: options.json && rendered.json !== undefined
-            ? JSON.stringify(rendered.json)
-            : rendered.text,
-        stderr: rendered.note || undefined,
-        failed: verdictFailed(rendered.verdict)
+        stdout: rendered.verdict === 'ok' ? body || undefined : undefined,
+        stderr: rendered.verdict === 'ok' ? undefined : body || undefined,
+        warnings,
+        exitCode: verdictExit(rendered.verdict)
     };
 }

@@ -20,25 +20,26 @@ export function renderComponentOwners(report: ComponentOwnerReport): string {
         .join('\n');
 }
 
-export function componentOwnersSummary(report: ComponentOwnerReport): string {
-    return `${report.className} in ${report.sceneName}: owners ${report.ownerCount}`
-        + `, nodes scanned ${report.nodesScanned}`;
+/** Which scene was searched and how much of it, neither of which the owner rows carry. */
+export function componentOwnersHead(report: ComponentOwnerReport): string {
+    return `${report.sceneName}  nodes scanned ${report.nodesScanned}`;
 }
 
+/**
+ * A scene never written to disk differs from it with no diffs to show, so the reason it gives is
+ * the answer rather than a remark beside one.
+ */
 export function renderSceneDirty(report: SceneDirtyReport): string {
     if (!report.differsFromDisk) {
         return `matches disk  ${report.scenePath || 'path unknown'}`;
     }
     const lines = [`differs from disk  ${report.scenePath || 'path unknown'}`
-        + `  differences: ${report.diffs.length}`];
+        + `  differences: ${report.diffs.length}`
+        + (report.reason ? `  ${report.reason}` : '')];
     for (const diff of report.diffs) {
         lines.push(`  ${diff.path}  scene ${diff.live}  disk ${diff.disk}`);
     }
     return lines.join('\n');
-}
-
-export function sceneDirtyNote(report: SceneDirtyReport): string {
-    return report.reason || '';
 }
 
 /**

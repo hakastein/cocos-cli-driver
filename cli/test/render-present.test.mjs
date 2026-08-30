@@ -2,26 +2,57 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { present } from '../src/render/present.ts';
-import { verdictFailed } from '../src/render/verdict.ts';
+import { verdictExit } from '../src/render/verdict.ts';
 
 // The closed set exists for this table: the exit code is decided once here instead of being
-// reassembled in every command body.
-test('exactly ok and UNVERIFIED exit zero', () => {
-    assert.equal(verdictFailed('ok'), false);
-    assert.equal(verdictFailed('UNVERIFIED'), false);
-    assert.equal(verdictFailed('UNPERSISTED'), true);
-    assert.equal(verdictFailed('FAILED'), true);
-    assert.equal(verdictFailed('TIMEOUT'), true);
+// reassembled in every command body, and each failing class carries its own number.
+test('each verdict has its own exit code', () => {
+    assert.equal(verdictExit('ok'), 0);
+    assert.equal(verdictExit('FAILED'), 1);
+    assert.equal(verdictExit('UNVERIFIED'), 3);
+    assert.equal(verdictExit('UNPERSISTED'), 4);
+    assert.equal(verdictExit('TIMEOUT'), 5);
 });
 
-test('an outcome starts with its verdict and leaves the tail free text', () => {
+test('a successful call answers on stdout and leaves stderr empty', () => {
+    const output = present({ kind: 'action', verdict: 'ok', summary: 'scene saved' });
+    assert.equal(output.stdout, 'scene saved');
+    assert.equal(output.stderr, undefined);
+    assert.equal(output.exitCode, 0);
+});
+
+// A redirection of stdout into a file must never leave half an answer there.
+test('a failing call answers on stderr and leaves stdout empty', () => {
     const output = present({ kind: 'action', verdict: 'FAILED', summary: 'Guard not moved' });
-    assert.equal(output.stdout, 'FAILED  Guard not moved');
-    assert.equal(output.failed, true);
+    assert.equal(output.stdout, undefined);
+    assert.equal(output.stderr, 'FAILED  Guard not moved');
+    assert.equal(output.exitCode, 1);
 });
 
-test('an empty note does not become an empty line on stderr', () => {
-    assert.equal(present({ kind: 'action', verdict: 'ok', summary: 'scene saved' }).stderr, undefined);
+test('warnings ride the report as a list and print under the answer', () => {
+    const output = present({
+        kind: 'action', verdict: 'ok', summary: 'socket added',
+        warnings: ['written on the live component']
+    });
+    assert.deepEqual(output.warnings, ['written on the live component']);
+    assert.equal(output.stdout, 'socket added\nwarning: written on the live component');
+});
+
+test('a bracket that held costs no line, and one that did not becomes a warning', () => {
+    assert.deepEqual(
+        present({ kind: 'action', verdict: 'ok', summary: 'done', undoNote: null }).warnings, []);
+    assert.deepEqual(
+        present({ kind: 'action', verdict: 'ok', summary: 'done', undoNote: 'left open' }).warnings,
+        ['left open']);
+});
+
+test('a failing report takes its warnings to stderr with the rest of it', () => {
+    const output = present({
+        kind: 'action', verdict: 'TIMEOUT', summary: 'the build did not finish',
+        warnings: ['wrote onto task 1']
+    });
+    assert.equal(output.stdout, undefined);
+    assert.match(output.stderr, /^TIMEOUT {2}the build did not finish\nwarning: wrote onto task 1$/);
 });
 
 const writeReport = (over = {}) => ({
@@ -38,16 +69,29 @@ const writeReport = (over = {}) => ({
 
 // The verdict is computed from the report's data: a command never passes it and so cannot drift
 // from what gets printed.
-test('a write a save will drop gets UNPERSISTED and a one', () => {
+test('a write a save will drop is UNPERSISTED with its own exit code', () => {
     const output = present(writeReport({ persisted: false }));
-    assert.equal(output.stdout.split('  ')[0], 'UNPERSISTED');
-    assert.equal(output.failed, true);
+    assert.equal(output.exitCode, 4);
+    assert.match(output.stderr, /^UNPERSISTED {2}cc\.Sprite\.color/);
 });
 
-test('on the live channel persisted=false stays ok', () => {
+test('a write nobody checked for persistence is UNVERIFIED rather than ok', () => {
+    const output = present(writeReport({ persisted: null }));
+    assert.equal(output.exitCode, 3);
+    assert.match(output.stderr, /^UNVERIFIED {2}cc\.Sprite\.color/);
+});
+
+test('on the live channel persisted=false stays a success', () => {
     const output = present(writeReport({ persisted: false, channel: 'live' }));
-    assert.equal(output.stdout.split('  ')[0], 'ok');
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 0);
+    assert.match(output.stdout, /^cc\.Sprite\.color/);
+});
+
+// The word already opens each write's own line; a report-wide head above them would be the head
+// line this report shape dropped.
+test('a write batch is not given a head line of its own', () => {
+    const output = present(writeReport({ persisted: false }));
+    assert.equal(output.stderr.split('\n').length, 1);
 });
 
 const settle = (over = {}) => ({
@@ -56,48 +100,35 @@ const settle = (over = {}) => ({
         action: 'refreshed', target: 'db://assets/f', landedAt: 'db://assets/f', elapsedMs: 60000,
         settled: true, assets: { added: [], removed: [], changed: [] },
         classes: { added: [], removed: [] }, ...over
-    },
-    timeoutMs: 60000
+    }
 });
 
-test('a database that did not go quiet within the timeout is TIMEOUT with a one', () => {
+test('a database that did not go quiet within the timeout is TIMEOUT', () => {
     const output = present(settle({ settled: false }));
-    assert.equal(output.stdout.split('  ')[0], 'TIMEOUT');
-    assert.equal(output.failed, true);
-    assert.match(output.stderr, /60s/);
+    assert.equal(output.exitCode, 5);
+    assert.match(output.stderr, /^TIMEOUT {2}db:\/\/assets\/f/);
 });
 
-test('the command note arrives alongside the settle note rather than instead of it', () => {
-    const output = present({ ...settle({ classes: null }), note: 'db:// paths inside a .meta do not move' });
-    assert.match(output.stderr, /delta is unknown/);
-    assert.match(output.stderr, /\.meta do not move/);
+test('a class delta the scene never answered makes the whole read UNVERIFIED', () => {
+    const output = present(settle({ classes: null }));
+    assert.equal(output.exitCode, 3);
+    assert.match(output.stderr, /component classes: unknown/);
 });
 
 const ASSET = { name: 'rifle', type: 'cc.Prefab', uuid: 'u-1', url: 'db://assets/rifle.prefab' };
 
-test('--json prints the structural form instead of text', () => {
-    const output = present({ kind: 'assetInfo', asset: ASSET }, { json: true });
-    assert.deepEqual(JSON.parse(output.stdout), ASSET);
-});
-
-// `--field` exists to be substituted into a shell variable, and a JSON wrapper breaks that.
-test('--field overrides --json and answers a bare value', () => {
-    const output = present({ kind: 'assetInfo', asset: ASSET, field: 'uuid' }, { json: true });
-    assert.equal(output.stdout, 'u-1');
-});
-
-test('--json on a report with no structural form answers the same text, not emptiness', () => {
-    const output = present({ kind: 'action', verdict: 'ok', summary: 'removed Canvas/Bg' }, { json: true });
-    assert.equal(output.stdout, 'ok  removed Canvas/Bg');
+// `--field` exists to be substituted into a shell variable, so it answers a bare value.
+test('--field answers one value and nothing around it', () => {
+    assert.equal(present({ kind: 'assetInfo', asset: ASSET, field: 'uuid' }).stdout, 'u-1');
 });
 
 const missing = (entries) => ({ kind: 'sceneMissing', missing: { entries } });
 
 test('a dead component in the scene is an outcome rather than a calm report', () => {
     const found = present(missing([{ nodePath: 'a', nodeUuid: 'u', componentUuid: 'c', cid: null }]));
-    assert.equal(found.failed, true);
-    assert.match(found.stderr, /^FAILED/);
-    assert.equal(present(missing([])).failed, false);
+    assert.equal(found.exitCode, 1);
+    assert.match(found.stderr, /^FAILED\n/);
+    assert.equal(present(missing([])).exitCode, 0);
 });
 
 const reading = (over = {}) => ({
@@ -110,6 +141,18 @@ const address = {
     choice: { index: 0, className: 'Npc', cid: null, enabled: true, sameClassCount: 1 }
 };
 
+// A hidden property is reachable only through --prop, so this read is the only place that can say
+// the inspector does not draw it; the value line carries neither fact.
+test('a value that drifted from the default and one the inspector hides are named in the head', () => {
+    const output = present({
+        kind: 'componentProperty',
+        address,
+        reading: reading({ differsFromDefault: true, hiddenInInspector: true }),
+        references: new Map()
+    });
+    assert.match(output.stdout.split('\n')[0], /differs from the default {2}hidden in the inspector$/);
+});
+
 test('a reference prints as the node name rather than a bare uuid when the index knows it', () => {
     const output = present({
         kind: 'componentProperty',
@@ -117,21 +160,25 @@ test('a reference prints as the node name rather than a bare uuid when the index
         reading: reading(),
         references: new Map([['u-hero', { kind: 'node', path: 'Characters/hero' }]])
     });
-    assert.match(output.stdout, /Characters\/hero {2}u-hero/);
-    assert.match(output.stderr, /Npc\.target {2}cc\.Node/);
+    assert.match(output.stdout, /^Npc\.target {2}cc\.Node\nCharacters\/hero {2}u-hero$/);
 });
 
-test('a property that drifted from the default is named in the note', () => {
+// The scene refusing to name the references answered part of the question; unread data must not
+// reach the caller looking like absent data.
+test('a read that could not name its references is UNVERIFIED and goes to stderr', () => {
     const output = present({
         kind: 'componentProperty',
         address,
-        reading: reading({ differsFromDefault: true }),
-        references: new Map()
+        reading: reading(),
+        references: new Map(),
+        unread: 'the scene could not be enumerated'
     });
-    assert.match(output.stderr, /differs from the default/);
+    assert.equal(output.exitCode, 3);
+    assert.equal(output.stdout, undefined);
+    assert.match(output.stderr, /the scene could not be enumerated/);
 });
 
-test('the hidden properties and the read count reach the note', () => {
+test('the hidden properties reach the head and the read count does not', () => {
     const output = present({
         kind: 'componentProperties',
         address,
@@ -139,6 +186,18 @@ test('the hidden properties and the read count reach the note', () => {
         hidden: ['_id'],
         references: new Map()
     });
-    assert.match(output.stderr, /properties: 2/);
-    assert.match(output.stderr, /hidden: 1/);
+    assert.match(output.stdout, /hidden: 1/);
+    assert.doesNotMatch(output.stdout, /properties: 2/);
+});
+
+test('an uncut listing gets no head line counting its own rows', () => {
+    const output = present({
+        kind: 'assetList', assets: [{ ...ASSET, type: 'cc.Prefab' }], total: 1
+    });
+    assert.doesNotMatch(output.stdout, /assets: 1/);
+});
+
+test('a cut listing names the count the rows cannot give', () => {
+    const output = present({ kind: 'assetList', assets: [ASSET], total: 254 });
+    assert.match(output.stdout, /^assets: 254, showing 1\n/);
 });

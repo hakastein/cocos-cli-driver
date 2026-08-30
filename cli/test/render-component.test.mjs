@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-    classListSummary, renderClassList, renderSockets, socketsSummary
-} from '../src/render/component.ts';
+import { renderClassList, renderSockets, socketsHead } from '../src/render/component.ts';
 
 const menu = [
     { name: 'cc.Camera', cid: 'cc.Camera', path: 'Rendering/Camera' },
@@ -29,14 +27,6 @@ test('an empty answer is said outright rather than printed as nothing', () => {
     assert.equal(renderClassList([]), 'no class matched');
 });
 
-test('the summary of the menu names what the count is of', () => {
-    assert.equal(classListSummary(menu.length), 'components offered: 2');
-});
-
-test('the summary of a registry listing names the base that was asked about', () => {
-    assert.match(classListSummary(260, 'cc.Component'), /cc\.Component/);
-    assert.match(classListSummary(260, 'cc.Component'), /260/);
-});
 
 const sockets = (list, over = {}) => ({
     nodeUuid: 'node-1', useBakedAnimation: true, sockets: list, ...over
@@ -70,9 +60,10 @@ test('a node with no sockets is said outright', () => {
     assert.equal(renderSockets(sockets([])), 'no socket on this node');
 });
 
-test('the summary carries the socket count and whether the animation is baked', () => {
-    assert.match(socketsSummary(sockets([socket()])), /sockets: 1/);
-    assert.match(socketsSummary(sockets([socket()])), /useBakedAnimation=true/);
+// Baked animation decides whether the sockets under it move a bone at all, and no socket row
+// carries it.
+test('the head carries the baked-animation flag and not a count of the rows', () => {
+    assert.equal(socketsHead(sockets([socket()])), 'useBakedAnimation=true');
 });
 
 test('a listing of bare names carries no trailing padding for grep to pick up', () => {

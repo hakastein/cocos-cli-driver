@@ -56,10 +56,9 @@ export function renderAssetList(assets: readonly AssetRecord[]): string {
         .join('\n');
 }
 
-export function assetListSummary(shown: number, total: number): string {
-    return shown === total
-        ? `assets: ${shown}`
-        : `assets: ${total}, showing ${shown} — raise --max or narrow the search`;
+/** Only a cut listing gets a head: an uncut one's count is the number of lines under it. */
+export function assetListHead(shown: number, total: number): string | undefined {
+    return shown === total ? undefined : `assets: ${total}, showing ${shown}`;
 }
 
 const DEFAULT_LIST_CAP = 40;
@@ -72,15 +71,24 @@ function listed(urls: readonly string[], mark: string, cap: number): string[] {
 
 /**
  * `refresh` and `reimport` return before the import finishes, so `the command ran` and `the database
- * finished importing` are two different pieces of news, and the second decides the verdict.
+ * finished importing` are two different pieces of news, and the second decides the verdict. A
+ * `classes` of `null` is the scene not having answered that half of the question, which is a read
+ * that came back partial rather than one that came back empty.
  */
 export function assetVerdict(report: AssetReport): Verdict {
     if (report.failure) return 'FAILED';
-    return report.settled ? 'ok' : 'TIMEOUT';
+    if (!report.settled) return 'TIMEOUT';
+    return report.classes === null ? 'UNVERIFIED' : 'ok';
 }
 
-export function renderAssetReport(report: AssetReport, cap: number = DEFAULT_LIST_CAP): string {
-    const head = assetVerdict(report);
+export interface RenderedAssetReport {
+    head: string;
+    body: string;
+}
+
+export function renderAssetReport(
+    report: AssetReport, cap: number = DEFAULT_LIST_CAP
+): RenderedAssetReport {
     const seconds = (report.elapsedMs / 1000).toFixed(1);
     const { added, removed, changed } = report.assets;
     const quiet = assetDiffEmpty(report.assets);
@@ -88,9 +96,7 @@ export function renderAssetReport(report: AssetReport, cap: number = DEFAULT_LIS
         ? `  landed at ${report.landedAt}`
         : '';
 
-    const lines = [
-        `${head}  ${report.target}  ${report.action} in ${seconds}s${elsewhere}${quiet ? '  no changes' : ''}`
-    ];
+    const lines: string[] = [];
     if (!quiet) {
         lines.push(`assets: +${added.length}  -${removed.length}  ~${changed.length}`);
         lines.push(...listed(added, '+', cap));
@@ -98,26 +104,23 @@ export function renderAssetReport(report: AssetReport, cap: number = DEFAULT_LIS
         lines.push(...listed(changed, '~', cap));
     }
     if (report.failure) lines.push(report.failure);
-    if (report.classes && (report.classes.added.length || report.classes.removed.length)) {
-        const marks = report.classes.added.map(name => `+${name}`)
-            .concat(report.classes.removed.map(name => `-${name}`));
-        lines.push(`component classes: ${marks.join('  ')}`);
-    }
-    return lines.join('\n');
+    lines.push(`component classes: ${classDelta(report.classes)}`);
+
+    return {
+        head: `${report.target}  ${report.action} in ${seconds}s${elsewhere}${quiet ? '  no changes' : ''}`,
+        body: lines.join('\n')
+    };
 }
 
 /**
- * `null` for classes means the scene did not answer: silence about the class delta and an empty
- * delta are different answers, and the first has to be named — otherwise `the class never showed up`
- * reads as `the class did not change`.
+ * Silence about the class delta and an empty delta are different answers, and the first has to be
+ * named — otherwise `the class never showed up` reads as `the class did not change`.
  */
-export function assetNote(report: AssetReport, timeoutMs: number): string {
-    if (!report.settled && !report.failure) {
-        return `asset database did not go quiet in ${(timeoutMs / 1000).toFixed(0)}s — the import may still be running`;
-    }
-    return report.classes === null
-        ? 'the scene did not answer about registered classes — their delta is unknown'
-        : '';
+function classDelta(classes: AssetReport['classes']): string {
+    if (classes === null) return 'unknown — the scene did not answer';
+    const marks = classes.added.map(name => `+${name}`)
+        .concat(classes.removed.map(name => `-${name}`));
+    return marks.length ? marks.join('  ') : 'unchanged';
 }
 
 /** A node of the open scene that depends on an asset, whether by instance or by a component field. */
@@ -140,7 +143,3 @@ export function renderAssetUsers(report: AssetUsers): string {
 }
 
 const UNNAMED_PATH = '(path unknown)';
-
-export function assetUsersSummary(report: AssetUsers): string {
-    return `${report.asset}  nodes: ${report.nodes.length}`;
-}

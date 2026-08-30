@@ -20,15 +20,6 @@ export function renderPrefabDump(dump: PrefabAssetDump): string {
     return dump.nodes.map(nodeLine).join('\n');
 }
 
-export function prefabDumpSummary(dump: PrefabAssetDump): string {
-    return [
-        `${dump.rootName}  nodes: ${dump.nodeCount}  components: ${dump.componentCount}`,
-        dump.missingCount
-            ? `dead components: ${dump.missingCount} — such a slot crashes preview on scene load`
-            : ''
-    ].filter(Boolean).join('  ');
-}
-
 /** The property and its value as `describeOverrideValue` named them on the scene side. */
 function overrideValue(record: PrefabOverrideRecord): string {
     switch (record.valueKind) {
@@ -64,9 +55,9 @@ export function renderPrefabOverrides(report: PrefabOverrideReport): string {
         .join('\n');
 }
 
-export function prefabOverridesSummary(report: PrefabOverrideReport): string {
+/** Removed components and mounted children are overrides the property rows do not list. */
+export function prefabOverridesHead(report: PrefabOverrideReport): string {
     return [
-        `${report.nodeName}  overrides: ${report.overrideCount}`,
         `prefab: ${report.prefabAsset || 'unknown'}`,
         report.removedComponents ? `removed components: ${report.removedComponents}` : '',
         report.mountedChildren ? `mounted children: ${report.mountedChildren}` : ''

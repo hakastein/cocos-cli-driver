@@ -24,16 +24,16 @@ const project = () => db({
 
 test('a refresh that changed nothing says so and exits zero', async () => {
     const output = present(await assetRefresh(project(), { target: 'db://assets/props', ...wait() }));
-    assert.match(output.stdout, /^ok {2}db:\/\/assets\/props {2}refreshed in/);
+    assert.match(output.stdout, /^db:\/\/assets\/props {2}refreshed in/);
     assert.match(output.stdout, /no changes/);
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 0);
 });
 
 test('a move names where the asset actually is, and the uuid survives it', async () => {
     const driver = project();
     const output = present(await assetMove(driver, {
         source: 'db://assets/props/rifle.prefab', target: 'db://assets/crates/rifle.prefab', ...wait() }));
-    assert.match(output.stdout, /^ok/);
+    assert.equal(output.exitCode, 0);
     assert.doesNotMatch(output.stdout, /landed at/);
     assert.equal(await driver.editor.assetDb.queryUrl('u-rifle'), 'db://assets/crates/rifle.prefab');
 });
@@ -57,15 +57,15 @@ test('an asset the database lost track of after the move is a failure rather tha
     driver.editor.assetDb.queryUrl = async () => undefined;
     const output = present(await assetMove(driver, {
         source: 'db://assets/props/rifle.prefab', target: 'db://assets/crates/rifle.prefab', ...wait() }));
-    assert.equal(output.stdout.split('  ')[0], 'FAILED');
-    assert.match(output.stdout, /at no address/);
+    assert.equal(output.stderr.split('  ')[0], 'FAILED');
+    assert.match(output.stderr, /at no address/);
 });
 
 test('a copy waits for the database and reports the new asset, not the original', async () => {
     const driver = project();
     const output = present(await assetCopy(driver, {
         source: 'db://assets/props/rifle.prefab', target: 'db://assets/crates/rifle.prefab', ...wait() }));
-    assert.match(output.stdout, /^ok/);
+    assert.equal(output.exitCode, 0);
     assert.match(output.stdout, /\+ db:\/\/assets\/crates\/rifle\.prefab/);
     assert.notEqual(await driver.editor.assetDb.queryUuid('db://assets/crates/rifle.prefab'), 'u-rifle');
 });
@@ -78,13 +78,13 @@ test('a copy the database renamed around a taken address names the address it re
     const output = present(await assetCopy(driver, {
         source: 'db://assets/props/rifle.prefab', target: 'db://assets/crates/rifle.prefab', ...wait() }));
     assert.match(output.stdout, /landed at db:\/\/assets\/crates\/rifle-001\.prefab/);
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 0);
 });
 
 test('a delete reports the assets that went and leaves the uuid at no address', async () => {
     const driver = project();
     const output = present(await assetRemove(driver, { target: 'db://assets/props', ...wait() }));
-    assert.match(output.stdout, /^ok/);
+    assert.equal(output.exitCode, 0);
     assert.match(output.stdout, /- db:\/\/assets\/props\/rifle\.prefab/);
     assert.equal(await driver.editor.assetDb.queryUrl('u-rifle'), undefined);
 });
@@ -93,16 +93,16 @@ test('a folder the database still holds after the delete is a failure, not a sil
     const driver = project();
     driver.editor.assetDb.deleteAsset = async () => null;
     const output = present(await assetRemove(driver, { target: 'db://assets/props', ...wait() }));
-    assert.equal(output.stdout.split('  ')[0], 'FAILED');
-    assert.match(output.stdout, /still at db:\/\/assets\/props/);
+    assert.equal(output.stderr.split('  ')[0], 'FAILED');
+    assert.match(output.stderr, /still at db:\/\/assets\/props/);
 });
 
 test('mkdir waits for the folder to be imported before answering', async () => {
     const driver = project();
     const output = present(await assetMkdir(driver, { folder: 'db://assets/props/decals', ...wait() }));
-    assert.match(output.stdout, /^ok {2}db:\/\/assets\/props\/decals {2}created in/);
+    assert.match(output.stdout, /^db:\/\/assets\/props\/decals {2}created in/);
     assert.match(output.stdout, /\+ db:\/\/assets\/props\/decals/);
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 0);
 });
 
 // `settled` is a real answer for every asset command, which is why `persisted` has no place in the
@@ -113,8 +113,8 @@ test('a database that never goes quiet is a TIMEOUT rather than a copy reported 
     const output = present(await assetCopy(driver, {
         source: 'db://assets/props/rifle.prefab', target: 'db://assets/crates/rifle.prefab',
         ...wait({ timeoutMs: 60 }) }));
-    assert.equal(output.stdout.split('  ')[0], 'TIMEOUT');
-    assert.equal(output.failed, true);
+    assert.equal(output.stderr.split('  ')[0], 'TIMEOUT');
+    assert.equal(output.exitCode, 5);
 });
 
 test('a copy the database never gained is a failure rather than an address invented for it', async () => {
@@ -122,8 +122,8 @@ test('a copy the database never gained is a failure rather than an address inven
     driver.editor.assetDb.copyAsset = async () => null;
     const output = present(await assetCopy(driver, {
         source: 'db://assets/props/rifle.prefab', target: 'db://assets/crates/rifle.prefab', ...wait() }));
-    assert.equal(output.stdout.split('  ')[0], 'FAILED');
-    assert.match(output.stdout, /no copy of db:\/\/assets\/props\/rifle\.prefab appeared/);
+    assert.equal(output.stderr.split('  ')[0], 'FAILED');
+    assert.match(output.stderr, /no copy of db:\/\/assets\/props\/rifle\.prefab appeared/);
 });
 
 test('get names the asset by its db:// url and by its uuid alike', async () => {
@@ -161,17 +161,18 @@ test('--name narrows the listing and the summary still names the full count', as
     assert.doesNotMatch(output.stdout, /pistol/);
 });
 
-// The cap is on the listing, not on the count: a summary that shrank with it would say the project
+// The cap is on the listing, not on the count: a head that shrank with it would say the project
 // holds fewer assets than it does.
-test('--max cuts the listing while the summary keeps the whole count', async () => {
+test('--max cuts the listing while the head keeps the whole count', async () => {
     const driver = db({
         'db://assets/props/a.prefab': 'u-a',
         'db://assets/props/b.prefab': 'u-b',
         'db://assets/props/c.prefab': 'u-c'
     });
     const output = present(await assetList(driver, { folder: 'db://assets/props', max: 1 }));
-    assert.equal(output.stdout.split('\n').length, 1);
-    assert.match(output.stderr, /3/);
+    const lines = output.stdout.split('\n');
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0], 'assets: 3, showing 1');
 });
 
 test('a type outside the known list is refused, naming the ones that are known', async () => {
@@ -184,29 +185,30 @@ test('reimport reruns the importer on the asset and waits for the database to go
     const driver = project();
     const output = present(await assetReimport(
         driver, { target: 'db://assets/props/rifle.prefab', ...wait() }));
-    assert.match(output.stdout, /^ok {2}db:\/\/assets\/props\/rifle\.prefab {2}reimported in/);
+    assert.match(output.stdout, /^db:\/\/assets\/props\/rifle\.prefab {2}reimported in/);
     assert.equal(driver.calls.find(call => call.name === 'assetDb.reimportAsset').args[0],
         'db://assets/props/rifle.prefab');
 });
 
 // A file that appeared past the editor is not in the database yet, and a reimport of it would
 // answer about nothing at all.
-test('an asset the database does not know is refused, pointing at refresh', async () => {
+test('an asset the database does not know is refused rather than reimported', async () => {
     await assert.rejects(
         () => assetReimport(project(), { target: 'db://assets/props/new.prefab', ...wait() }),
-        /cocos asset refresh/);
+        /does not know 'db:\/\/assets\/props\/new\.prefab'/);
 });
 
 test('ready answers whether the database finished starting up', async () => {
-    assert.match(present(await assetReady(project())).stdout, /^ok {2}the asset database is ready/);
+    assert.equal(present(await assetReady(project())).stdout, 'the asset database is ready');
 });
 
 test('a database still starting up is a non-zero exit rather than a quiet no', async () => {
     const driver = project();
     driver.editor.assetDb.queryReady = async () => false;
     const output = present(await assetReady(driver));
-    assert.equal(output.stdout.split('  ')[0], 'FAILED');
-    assert.equal(output.failed, true);
+    assert.equal(output.stdout, undefined);
+    assert.equal(output.stderr.split('  ')[0], 'FAILED');
+    assert.equal(output.exitCode, 1);
 });
 
 const usingScene = () => new MemoryDriver({
@@ -225,7 +227,7 @@ test('users names both an instance of the asset and a component field holding it
     assert.match(output.stdout, /Hero/);
     assert.match(output.stdout, /Guard/);
     assert.doesNotMatch(output.stdout, /Crate/);
-    assert.match(output.stderr, /nodes: 2/);
+    assert.equal(output.stderr, undefined);
 });
 
 test('an asset nothing uses is said outright', async () => {

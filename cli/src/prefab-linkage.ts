@@ -63,8 +63,7 @@ export function establishedLinkage(linkage: PrefabLinkageReport): LinkageVerdict
         return {
             verdict: 'FAILED',
             detail: 'the node was created but carries no PrefabInfo: the scene does not track the asset, '
-                + 'the saved scene will hold no _prefab block, and prefab edits will not reach the node. '
-                + 'Delete the node and record the gap rather than working with the copy'
+                + 'the saved scene will hold no _prefab block, and prefab edits will not reach the node'
         };
     }
 

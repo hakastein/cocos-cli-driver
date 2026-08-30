@@ -143,19 +143,20 @@ export async function componentSet(client: Driver, spec: SetSpec): Promise<Repor
 
 interface ResolvedReferences {
     index: Map<string, ReferenceLabel>;
-    note?: string;
+    /** What of the answer could not be read, which makes the whole read UNVERIFIED. */
+    unread?: string;
 }
 
 /**
  * One scene dump names every node and component reference at once; an asset costs one call each.
- * A lookup that fails leaves the uuid bare and says so on stderr.
+ * A lookup that fails leaves the uuid bare and is reported as a read that came back partial.
  */
 async function resolveReferences(
     client: Driver, readings: PropertyReading[]
 ): Promise<ResolvedReferences> {
     const wanted = referencedUuids(readings);
     const index = new Map<string, ReferenceLabel>();
-    let note: string | undefined;
+    let unread: string | undefined;
 
     if (wanted.scene.length) {
         try {
@@ -166,7 +167,7 @@ async function resolveReferences(
                 if (label) index.set(uuid, label);
             }
         } catch (error) {
-            note = `node references print as bare uuids: the scene could not be enumerated — ${
+            unread = `node references print as bare uuids: the scene could not be enumerated — ${
                 error instanceof Error ? error.message : String(error)}`;
         }
     }
@@ -174,7 +175,7 @@ async function resolveReferences(
         const url = await client.editor.assetDb.queryUrl(uuid).catch(() => undefined);
         if (typeof url === 'string' && url) index.set(uuid, { kind: 'asset', path: url });
     }
-    return { index, note };
+    return { index, unread };
 }
 
 export async function componentGet(client: Driver, spec: GetSpec): Promise<Report> {
@@ -182,19 +183,26 @@ export async function componentGet(client: Driver, spec: GetSpec): Promise<Repor
     const component = await findComponent(client, nodeUuid, spec.component);
     const address: ComponentAddress = { nodePath: spec.node, nodeUuid, choice: component };
 
+    const warnings = component.sameClassCount > 1
+        ? [`the node carries ${component.sameClassCount} components of ${component.className}, `
+            + 'and the first was read']
+        : undefined;
+
     if (spec.property) {
         const reading = findProperty(component.dump, spec.property);
         if (!reading) {
             throw new Error(`component '${component.className}' has no property '${spec.property}'; it has: ${
                 propertyNames(component.dump).join(', ') || '(none)'}`);
         }
-        const { index, note } = await resolveReferences(client, [reading]);
-        return { kind: 'componentProperty', address, reading, references: index, note };
+        const { index, unread } = await resolveReferences(client, [reading]);
+        return { kind: 'componentProperty', address, reading, references: index, unread, warnings };
     }
 
     const { readings, hidden } = readComponentProperties(component.dump);
-    const { index, note } = await resolveReferences(client, readings);
-    return { kind: 'componentProperties', address, readings, hidden, references: index, note };
+    const { index, unread } = await resolveReferences(client, readings);
+    return {
+        kind: 'componentProperties', address, readings, hidden, references: index, unread, warnings
+    };
 }
 
 export interface AddSpec {
@@ -449,11 +457,10 @@ export function registerComponent(program: Command, resolve: () => Promise<Resol
         .command('get <path> <type>')
         .description('read the properties of a component as the inspector holds them')
         .option('--prop <name>', 'this property only')
-        .option('--json', 'print the structural form instead of text')
-        .action((target: string, type: string, options: { prop?: string; json?: boolean }) =>
+        .action((target: string, type: string, options: { prop?: string }) =>
             withClient(resolve, client => componentGet(client, {
                 node: target, component: type, property: options.prop
-            }), { json: options.json }));
+            })));
 
     component
         .command('add <path> <type>')
@@ -477,9 +484,7 @@ export function registerComponent(program: Command, resolve: () => Promise<Resol
         .command('types')
         .description('what the editor offers to add; the class registry is a wider set, and '
             + `'cocos scene classes cc.Component' is what answers it`)
-        .option('--json', 'print the structural form instead of text')
-        .action((options: { json?: boolean }) =>
-            withClient(resolve, componentTypes, { json: options.json }));
+        .action(() => withClient(resolve, componentTypes));
 
     const array = component.command('array').description('elements of an array property');
 

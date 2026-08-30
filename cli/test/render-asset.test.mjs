@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import * as r from '../src/render/asset.ts';
 
 const {
-    assetField, renderAssetInfo, renderAssetList, assetListSummary, renderAssetReport, assetNote,
-    assetVerdict, renderAssetUsers, assetUsersSummary
+    assetField, renderAssetInfo, renderAssetList, assetListHead, renderAssetReport,
+    assetVerdict, renderAssetUsers
 } = r;
 
 const asset = (over = {}) => ({
@@ -57,41 +57,35 @@ test('renderAssetList says so rather than printing an empty string', () => {
     assert.equal(renderAssetList([]), 'no asset matched');
 });
 
-test('the summary distinguishes the whole set from a cut one', () => {
-    assert.equal(assetListSummary(3, 3), 'assets: 3');
-    assert.match(assetListSummary(15, 254), /254/);
-    assert.match(assetListSummary(15, 254), /--max/);
+// A head line over an uncut listing would only give back the number of lines under it.
+test('only a cut listing gets a head, and it names the count the rows cannot give', () => {
+    assert.equal(assetListHead(3, 3), undefined);
+    assert.equal(assetListHead(15, 254), 'assets: 254, showing 15');
 });
 
-test('an untouched database is reported as such and not as a bare ok', () => {
+test('an untouched database says so rather than printing an empty diff', () => {
     assert.equal(
-        renderAssetReport(report()),
-        'ok  db://assets/framework  refreshed in 8.4s  no changes');
+        renderAssetReport(report()).head, 'db://assets/framework  refreshed in 8.4s  no changes');
 });
 
 test('the newly registered class is named — that is what a refresh is run for', () => {
-    const text = renderAssetReport(report({
+    const { body } = renderAssetReport(report({
         assets: { added: ['db://assets/f/TargetPolicy.ts'], removed: [], changed: [] },
         classes: { added: ['TargetPolicy'], removed: ['Npc'] }
     }));
-    assert.match(text, /component classes: \+TargetPolicy {2}-Npc/);
-    assert.match(text, /^assets: \+1 {2}-0 {2}~0$/m);
-    assert.match(text, /^ {2}\+ db:\/\/assets\/f\/TargetPolicy\.ts$/m);
+    assert.match(body, /component classes: \+TargetPolicy {2}-Npc/);
+    assert.match(body, /^assets: \+1 {2}-0 {2}~0$/m);
+    assert.match(body, /^ {2}\+ db:\/\/assets\/f\/TargetPolicy\.ts$/m);
 });
 
-test('a database that never went quiet does not get the ok head word', () => {
-    const text = renderAssetReport(report({ settled: false }));
-    assert.equal(text.split('  ')[0], 'TIMEOUT');
-});
-
-test('an operation that did not happen outranks the settle verdict in the head word', () => {
-    const text = renderAssetReport(report({ settled: true, failure: 'the asset stayed where it was' }));
-    assert.equal(text.split('  ')[0], 'FAILED');
-    assert.match(text, /the asset stayed where it was/);
+test('an operation that did not happen outranks the settle verdict', () => {
+    const failed = report({ settled: true, failure: 'the asset stayed where it was' });
+    assert.equal(assetVerdict(failed), 'FAILED');
+    assert.match(renderAssetReport(failed).body, /the asset stayed where it was/);
 });
 
 // The database answers before the import ends, so `the command ran` and `the database finished
-// importing` are different news, and the second one has to carry its own word.
+// importing` are different news, and the second one decides the verdict.
 test('a database still working when the timeout ran out is a TIMEOUT, not a FAILED', () => {
     assert.equal(assetVerdict(report({ settled: false })), 'TIMEOUT');
     assert.equal(assetVerdict(report({ settled: false, failure: 'the asset stayed where it was' })), 'FAILED');
@@ -100,42 +94,36 @@ test('a database still working when the timeout ran out is a TIMEOUT, not a FAIL
 
 test('a long list is capped and says how many it did not print', () => {
     const urls = Array.from({ length: 5 }, (_unused, index) => `db://assets/${index}.ts`);
-    const text = renderAssetReport(
+    const { body } = renderAssetReport(
         report({ assets: { added: urls, removed: [], changed: [] } }), 2);
-    assert.match(text, /\+ … and 3 more/);
-    assert.equal(/db:\/\/assets\/4\.ts/.test(text), false);
+    assert.match(body, /\+ … and 3 more/);
+    assert.equal(/db:\/\/assets\/4\.ts/.test(body), false);
 });
 
-test('an unanswered class list is called out, so silence is not read as no change', () => {
-    assert.match(assetNote(report({ classes: null }), 60000), /delta is unknown/);
-    assert.equal(assetNote(report(), 60000), '');
-});
-
-test('a timeout note names the timeout instead of the class question', () => {
-    assert.match(assetNote(report({ settled: false }), 60000), /60s/);
-});
-
-test('a failed operation reports its own failure rather than a settle note', () => {
-    assert.equal(assetNote(report({ settled: false, failure: 'not moved', classes: null }), 60000),
-        'the scene did not answer about registered classes — their delta is unknown');
+// Silence about the class delta and an empty delta are different answers: without the distinction
+// `the class never showed up` reads as `the class did not change`.
+test('a class list the scene never answered is unread rather than unchanged', () => {
+    assert.match(renderAssetReport(report({ classes: null })).body, /component classes: unknown/);
+    assert.match(renderAssetReport(report()).body, /component classes: unchanged/);
+    assert.equal(assetVerdict(report({ classes: null })), 'UNVERIFIED');
 });
 
 // The database renames on conflict by default, so the address asked for and the address reached are
 // two different facts and the second one is what a following command has to use.
 test('an asset that landed somewhere other than the address asked for says where', () => {
-    const text = renderAssetReport(report({
+    const { head } = renderAssetReport(report({
         action: 'moved from db://assets/a.prefab', target: 'db://assets/b.prefab',
         landedAt: 'db://assets/b-001.prefab'
     }));
-    assert.match(text, /landed at db:\/\/assets\/b-001\.prefab/);
+    assert.match(head, /landed at db:\/\/assets\/b-001\.prefab/);
 });
 
 test('an asset that reached the address asked for does not repeat it', () => {
-    assert.doesNotMatch(renderAssetReport(report()), /landed at/);
+    assert.doesNotMatch(renderAssetReport(report()).head, /landed at/);
 });
 
 test('an asset at no address at all is not passed off as having landed', () => {
-    assert.doesNotMatch(renderAssetReport(report({ landedAt: null })), /landed at/);
+    assert.doesNotMatch(renderAssetReport(report({ landedAt: null })).head, /landed at/);
 });
 
 const users = (list) => ({ asset: 'db://assets/weapon/prefab/rifle.prefab', nodes: list });
@@ -158,8 +146,3 @@ test('an asset nothing uses is said outright rather than printed as an empty lis
     assert.match(renderAssetUsers(users([])), /no node/);
 });
 
-test('the summary carries the count and the asset it is about', () => {
-    const text = assetUsersSummary(users([{ path: 'Characters/cc_hero', uuid: 'n-1' }]));
-    assert.match(text, /nodes: 1/);
-    assert.match(text, /rifle\.prefab/);
-});

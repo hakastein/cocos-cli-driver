@@ -16,11 +16,13 @@ const TWO_NODES = {
         children: [{ name: 'Bg', components: [{ type: 'Sprite' }] }] }]
 };
 
-test('the tree is built from the dump and reports the node count', async () => {
+// A head line counting the nodes would only give back the number of lines under it.
+test('the tree is built from the dump and gets no count above it', async () => {
     const output = await treeOutput(new MemoryDriver(TWO_NODES), {});
-    assert.equal(output.stderr, 'nodes: 2');
+    assert.equal(output.stderr, undefined);
     assert.match(output.stdout, /Canvas {2}\[Canvas\]/);
     assert.match(output.stdout, /Bg {2}\[Sprite\]/);
+    assert.doesNotMatch(output.stdout, /nodes: 2/);
 });
 
 test('a refusal from the scene script surfaces as an error carrying its own text', async () => {
@@ -29,7 +31,7 @@ test('a refusal from the scene script surfaces as an error carrying its own text
 
 test('a dump with no nodes does not pretend to be a tree', async () => {
     const output = await treeOutput(new MemoryDriver({ nodes: [] }), {});
-    assert.equal(output.stderr, 'nodes: 0');
+    assert.equal(output.stderr, undefined);
     assert.match(output.stdout, /empty|no nodes/i);
 });
 
@@ -83,7 +85,7 @@ test('missing lists the component slots whose script no longer resolves', async 
             nodePath: 'Canvas', nodeUuid: 'n-1', componentUuid: 'c-1', cid: 'abc'
         }]
     });
-    assert.match(present(await sceneMissing(driver, {})).stdout, /Canvas/);
+    assert.match(present(await sceneMissing(driver, {})).stderr, /Canvas/);
 });
 
 // --root is a node path, and the scene script takes a uuid: an unresolved path would scan the
@@ -115,7 +117,7 @@ const SCENE_ON_DISK = {
 test('open resolves a db:// url to a uuid before the editor is told to open it', async () => {
     const driver = new MemoryDriver(SCENE_ON_DISK);
     const output = present(await sceneOpen(driver, { target: 'db://assets/main.scene' }));
-    assert.match(output.stdout, /^ok {2}opened db:\/\/assets\/main\.scene/);
+    assert.match(output.stdout, /^opened db:\/\/assets\/main\.scene/);
     assert.equal(driver.calls.find(call => call.name === 'scene.openScene').args[0],
         '0ba73f57-eedc-484a-89e4-20aeef0b73fc');
 });
@@ -123,15 +125,16 @@ test('open resolves a db:// url to a uuid before the editor is told to open it',
 test('open by uuid names the url back, so the answer says which file was opened', async () => {
     const output = present(await sceneOpen(new MemoryDriver(SCENE_ON_DISK),
         { target: '0ba73f57-eedc-484a-89e4-20aeef0b73fc' }));
-    assert.match(output.stdout, /^ok {2}opened db:\/\/assets\/main\.scene/);
+    assert.match(output.stdout, /^opened db:\/\/assets\/main\.scene/);
 });
 
 test('an address the database does not know is refused before the editor is told anything', async () => {
     const driver = new MemoryDriver(SCENE_ON_DISK);
     const output = present(await sceneOpen(driver, { target: 'db://assets/gone.scene' }));
-    assert.match(output.stdout, /^FAILED/);
-    assert.match(output.stdout, /db:\/\/assets\/gone\.scene/);
-    assert.equal(output.failed, true);
+    assert.equal(output.stdout, undefined);
+    assert.match(output.stderr, /^FAILED/);
+    assert.match(output.stderr, /db:\/\/assets\/gone\.scene/);
+    assert.equal(output.exitCode, 1);
     assert.equal(driver.calls.some(call => call.name === 'scene.openScene'), false);
 });
 
@@ -143,46 +146,50 @@ test('a scene other than the one asked for left open is a failure rather than an
     });
     const output = present(await sceneOpen(driver,
         { target: 'db://assets/main.scene', poll: { timeoutMs: 20, intervalMs: 5 } }));
-    assert.match(output.stdout, /^FAILED/);
-    assert.match(output.stdout, /3e7bbb9e-ee77-4dac-bb0b-ef4ff2693369/);
-    assert.equal(output.failed, true);
+    assert.match(output.stderr, /^FAILED/);
+    assert.match(output.stderr, /3e7bbb9e-ee77-4dac-bb0b-ef4ff2693369/);
+    assert.equal(output.exitCode, 1);
 });
 
-test('a scene script that will not say which scene is open is unverified rather than ok', async () => {
+// A chain of commands has to stop on a scene nobody could confirm is open, rather than build the
+// next step on it.
+test('a scene script that will not say which scene is open is UNVERIFIED and non-zero', async () => {
     const driver = new MemoryDriver({
         ...SCENE_ON_DISK, refuses: { getCurrentSceneInfo: 'the scene worker is reloading' }
     });
     const output = present(await sceneOpen(driver,
         { target: 'db://assets/main.scene', poll: { timeoutMs: 20, intervalMs: 5 } }));
-    assert.match(output.stdout, /^UNVERIFIED/);
+    assert.equal(output.stdout, undefined);
+    assert.match(output.stderr, /^UNVERIFIED/);
     assert.match(output.stderr, /the scene worker is reloading/);
-    assert.equal(output.failed, false);
+    assert.equal(output.exitCode, 3);
 });
 
 test('save goes through the editor rather than writing the file itself', async () => {
     const driver = new MemoryDriver({ nodes: [] });
-    assert.match(present(await sceneSave(driver)).stdout, /^ok {2}scene saved/);
+    assert.equal(present(await sceneSave(driver)).stdout, 'scene saved');
     assert.equal(driver.calls.filter(call => call.name === 'scene.saveScene').length, 1);
 });
 
 test('close says so when the editor closed the scene', async () => {
     const output = present(await sceneClose(new MemoryDriver({ nodes: [] })));
-    assert.match(output.stdout, /^ok/);
-    assert.equal(output.failed, false);
+    assert.match(output.stdout, /scene closed/);
+    assert.equal(output.exitCode, 0);
 });
 
 // `close-scene` answers a boolean and the editor says `false` when it keeps the scene open; an
 // unread answer would print `ok` over a scene that is still there.
 test('close refused by the editor is a failure, not an ok', async () => {
     const output = present(await sceneClose(new MemoryDriver({ nodes: [], closeScene: false })));
-    assert.match(output.stdout, /^FAILED/);
-    assert.equal(output.failed, true);
+    assert.equal(output.stdout, undefined);
+    assert.match(output.stderr, /^FAILED/);
+    assert.equal(output.exitCode, 1);
 });
 
-test('reload says the scene is kept, since the name reads like a reopen and it is not one', async () => {
+test('reload answers what it did and nothing about what a reload is', async () => {
     const output = present(await sceneReload(new MemoryDriver({ nodes: [] })));
-    assert.match(output.stdout, /^ok {2}components of the open scene reloaded$/);
-    assert.match(output.stderr, /node uuids and writes not yet saved both survive/);
+    assert.equal(output.stdout, 'components of the open scene reloaded');
+    assert.equal(output.stderr, undefined);
 });
 
 const registry = () => new MemoryDriver({
@@ -194,11 +201,11 @@ test('classes lists what the engine registers under the base, the base included'
     const output = present(await sceneClasses(registry(), { base: 'cc.Component' }));
     assert.match(output.stdout, /cc\.SpriteComponent/);
     assert.match(output.stdout, /cc\.Component/);
-    assert.match(output.stderr, /cc\.Component: 3/);
+    assert.equal(output.stderr, undefined);
 });
 
 test('a base nothing extends answers an empty listing rather than the whole registry', async () => {
     const output = present(await sceneClasses(registry(), { base: 'cc.Asset' }));
     assert.equal(output.stdout, 'no class matched');
-    assert.match(output.stderr, /cc\.Asset: 0/);
+    assert.equal(output.stderr, undefined);
 });
