@@ -4,6 +4,7 @@ import { gateRefusal, gateReport } from '../dialog-gate.ts';
 import type { DiskAnswer } from '../dialog-gate.ts';
 import { present } from '../render/present.ts';
 import type { CommandOutput, PresentOptions, Report } from '../render/present.ts';
+import { raceTimeout } from '../settle.ts';
 import type { Resolved, ResolvedProject } from '../resolve.ts';
 
 /**
@@ -63,9 +64,16 @@ async function gated(client: Driver, run: (client: Driver) => Promise<Report>): 
     }
 }
 
+/** Bounded: the refusal exists to end a wait, and this call queues behind whatever is running. */
+const DISK_ANSWER_TIMEOUT_MS = 10_000;
+
 async function diskAnswer(client: Driver): Promise<DiskAnswer> {
     try {
-        const answer = await client.scene.call('sceneDirtyAgainstDisk');
+        const answer = await raceTimeout(
+            Promise.resolve(client.scene.call('sceneDirtyAgainstDisk')), DISK_ANSWER_TIMEOUT_MS);
+        if (answer === 'timed out') {
+            return { ok: false, error: `no answer in ${DISK_ANSWER_TIMEOUT_MS}ms` };
+        }
         return answer.success === true && answer.data !== undefined
             ? { ok: true, dirty: answer.data }
             : { ok: false, error: (answer.success === false && answer.error) || 'no answer' };

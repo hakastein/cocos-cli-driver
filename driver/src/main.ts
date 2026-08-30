@@ -21,8 +21,8 @@ export const methods: { [key: string]: (...any: any) => any } = {
     // Assigned into, not replaced: PipeServer holds this object, and a fresh one would leave it
     // reading the settings the extension loaded with.
     async updateSettings(next: DriverSettings) {
-        saveSettings(next);
         Object.assign(settings, next);
+        saveSettings(settings);
     }
 };
 

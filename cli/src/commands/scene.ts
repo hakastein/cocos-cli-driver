@@ -146,9 +146,7 @@ export async function sceneClose(client: Driver): Promise<Report> {
         : {
             kind: 'action',
             verdict: 'FAILED',
-            summary: 'the editor did not close the scene',
-            note: 'checked live 2026-08-21 on a scene carrying unsaved changes: `close-scene` '
-                + 'answered false and left the scene open'
+            summary: 'the scene cannot be closed while it holds unsaved changes'
         };
 }
 

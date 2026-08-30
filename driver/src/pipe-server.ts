@@ -22,6 +22,25 @@ const CANCEL_RECORDING = 'editor.scene.cancelRecording';
 
 const OUTSTANDING_INTERVAL_MS = 30_000;
 
+/** A read that has not answered by here is the wedged editor the gate exists to refuse. */
+const DIRTY_READ_TIMEOUT_MS = 5_000;
+
+function isGateRefusal(error: unknown): boolean {
+    const code = (error as { code?: unknown } | null)?.code;
+    return code === GATE_EDITOR_DIRTY || code === GATE_DIRTY_UNKNOWN;
+}
+
+/** The editor keeps working past a caller who stopped waiting, so the later rejection is swallowed. */
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T | 'timed out'> {
+    let timer: NodeJS.Timeout;
+    const cleared = promise.finally(() => clearTimeout(timer));
+    cleared.catch(() => { });
+    return Promise.race([
+        cleared,
+        new Promise<'timed out'>(resolve => { timer = setTimeout(() => resolve('timed out'), ms); })
+    ]);
+}
+
 function surfaceChecksum(): string {
     return createHash('sha1').update(ALL_METHODS.join('\n')).digest('hex').slice(0, 12);
 }
@@ -30,7 +49,14 @@ export class PipeServer {
     private server: net.Server | null = null;
     private readonly sockets = new Set<net.Socket>();
     private readonly queue = new PQueue({ concurrency: 1 });
-    private readonly rpc = new JSONRPCServer<net.Socket>();
+    // Default errorListener is console.warn on every rejection, which would file the gate's own
+    // refusals in project.log as unexpected errors.
+    private readonly rpc = new JSONRPCServer<net.Socket>({
+        errorListener: (message: string, error: unknown) => {
+            if (isGateRefusal(error)) return;
+            console.warn(message, error);
+        }
+    });
     private readonly address = pipePath(Editor.Project.path);
 
     // bracketOwner blocks other sockets' calls while a bracket is open; the queue alone can't, since it sits empty between an undo bracket's round-trips.
@@ -115,14 +141,20 @@ export class PipeServer {
      * happens to work the caller has not seen.
      */
     private async refuseIfEditorHoldsDirty(name: string): Promise<void> {
-        let dirty: boolean;
+        let dirty: boolean | 'timed out';
         try {
-            dirty = await this.editor.scene.queryDirty();
+            dirty = await withDeadline(this.editor.scene.queryDirty(), DIRTY_READ_TIMEOUT_MS);
         } catch (error) {
             throw new JSONRPCErrorException(
                 `${name} was not sent: the editor did not answer whether it holds unsaved changes`,
                 GATE_DIRTY_UNKNOWN,
                 { method: name, detail: error instanceof Error ? error.message : String(error) });
+        }
+        if (dirty === 'timed out') {
+            throw new JSONRPCErrorException(
+                `${name} was not sent: the editor did not answer whether it holds unsaved changes`,
+                GATE_DIRTY_UNKNOWN,
+                { method: name, detail: `no answer in ${DIRTY_READ_TIMEOUT_MS}ms` });
         }
         if (dirty) {
             throw new JSONRPCErrorException(
