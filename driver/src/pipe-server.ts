@@ -4,8 +4,10 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import split2 from 'split2';
 import PQueue from 'p-queue';
-import { JSONRPCServer } from 'json-rpc-2.0';
-import { ALL_METHODS, pipePath } from '@cocos-cli/shared';
+import { JSONRPCErrorException, JSONRPCServer } from 'json-rpc-2.0';
+import {
+    ALL_METHODS, GATE_DIRTY_UNKNOWN, GATE_EDITOR_DIRTY, pipePath, raisesDialog
+} from '@cocos-cli/shared';
 import type { Hello } from '@cocos-cli/shared';
 import { resolveMethod } from './method-table.ts';
 import type { EditorApi } from './editor-api.ts';
@@ -17,6 +19,8 @@ const VERSION = '2.0.0';
 const BEGIN_RECORDING = 'editor.scene.beginRecording';
 const END_RECORDING = 'editor.scene.endRecording';
 const CANCEL_RECORDING = 'editor.scene.cancelRecording';
+
+const OUTSTANDING_INTERVAL_MS = 30_000;
 
 function surfaceChecksum(): string {
     return createHash('sha1').update(ALL_METHODS.join('\n')).digest('hex').slice(0, 12);
@@ -53,42 +57,101 @@ export class PipeServer {
 
         for (const name of ALL_METHODS) {
             this.rpc.addMethod(name, async (params: unknown, socket: net.Socket) => {
-                // Waiting outside queue.add, not inside it, so the owner's own calls still get the sole concurrency:1 slot.
-                while (this.bracketOwner && this.bracketOwner !== socket) {
-                    await this.bracketGate;
+                const settled = this.watchOutstanding(name);
+                try {
+                    return await this.dispatch(name, params, socket);
+                } finally {
+                    settled();
                 }
-                if (name === BEGIN_RECORDING && this.bracketOwner === null) {
-                    this.holdBracket(socket);
-                }
-
-                return this.queue.add(async () => {
-                    const fn = resolveMethod(name, this.editor, this.scene);
-                    if (!fn) throw new Error(`driver does not carry '${name}'`);
-                    try {
-                        const result = await fn(...(Array.isArray(params) ? params : []));
-                        if (name === BEGIN_RECORDING) {
-                            if (this.bracketOwner === socket) {
-                                this.bracketUndoId = result as string;
-                            } else {
-                                // The close handler already freed the bracket without this id, because
-                                // it ran before beginRecording resolved. Cancel with the id it now has.
-                                this.editor.scene.cancelRecording(result as string).catch(
-                                    (error: unknown) => console.warn('[cocos-cli] dangling undo bracket:', error));
-                            }
-                        }
-                        return result;
-                    } catch (error) {
-                        if (name === BEGIN_RECORDING && this.bracketOwner === socket) this.freeBracket();
-                        throw error;
-                    } finally {
-                        if ((name === END_RECORDING || name === CANCEL_RECORDING)
-                            && this.bracketOwner === socket) {
-                            this.freeBracket();
-                        }
-                    }
-                });
             });
         }
+    }
+
+    private async dispatch(name: string, params: unknown, socket: net.Socket): Promise<unknown> {
+        // Waiting outside queue.add, not inside it, so the owner's own calls still get the sole concurrency:1 slot.
+        while (this.bracketOwner && this.bracketOwner !== socket) {
+            await this.bracketGate;
+        }
+        if (name === BEGIN_RECORDING && this.bracketOwner === null) {
+            this.holdBracket(socket);
+        }
+
+        return this.queue.add(async () => {
+            if (raisesDialog(name)) await this.refuseIfEditorHoldsDirty(name);
+            const fn = resolveMethod(name, this.editor, this.scene);
+            if (!fn) throw new Error(`driver does not carry '${name}'`);
+            try {
+                const result = await fn(...(Array.isArray(params) ? params : []));
+                if (name === BEGIN_RECORDING) {
+                    if (this.bracketOwner === socket) {
+                        this.bracketUndoId = result as string;
+                    } else {
+                        // The close handler already freed the bracket without this id, because
+                        // it ran before beginRecording resolved. Cancel with the id it now has.
+                        this.editor.scene.cancelRecording(result as string).catch(
+                            (error: unknown) => console.warn('[cocos-cli] dangling undo bracket:', error));
+                    }
+                }
+                return result;
+            } catch (error) {
+                if (name === BEGIN_RECORDING && this.bracketOwner === socket) this.freeBracket();
+                throw error;
+            } finally {
+                if ((name === END_RECORDING || name === CANCEL_RECORDING)
+                    && this.bracketOwner === socket) {
+                    this.freeBracket();
+                }
+            }
+        });
+    }
+
+    /**
+     * The editor answers these by raising a modal dialog when it holds its own dirty flag, and the
+     * dialog waits for a person while every later request for this project queues behind it. The
+     * flag is read INSIDE the queue: a write already queued raises it, so a read taken in front of
+     * the queue can be stale by the time the call is forwarded.
+     *
+     * The flag is only read. Clearing it, or saving the scene, would be the driver deciding what
+     * happens to work the caller has not seen.
+     */
+    private async refuseIfEditorHoldsDirty(name: string): Promise<void> {
+        let dirty: boolean;
+        try {
+            dirty = await this.editor.scene.queryDirty();
+        } catch (error) {
+            throw new JSONRPCErrorException(
+                `${name} was not sent: the editor did not answer whether it holds unsaved changes`,
+                GATE_DIRTY_UNKNOWN,
+                { method: name, detail: error instanceof Error ? error.message : String(error) });
+        }
+        if (dirty) {
+            throw new JSONRPCErrorException(
+                `${name} was not sent: the editor holds an unsaved scene and would wait for a person`,
+                GATE_EDITOR_DIRTY,
+                { method: name });
+        }
+    }
+
+    /**
+     * A request nobody answers leaves no trace today: the driver logs a failure on the way out and
+     * nothing on the way in, so a queue stopped behind a dialog had to be diagnosed from window
+     * titles. The outstanding line is unconditional because the setting that would turn it on is
+     * edited in a panel of the editor that is holding the dialog.
+     */
+    private watchOutstanding(name: string): () => void {
+        const started = Date.now();
+        if (this.settings.enableDebugLog) console.log(`[cocos-cli] ${name} received`);
+        const timer = setInterval(() => {
+            const seconds = Math.round((Date.now() - started) / 1000);
+            console.warn(`[cocos-cli] ${name} outstanding for ${seconds}s`);
+        }, OUTSTANDING_INTERVAL_MS);
+        timer.unref?.();
+        return () => {
+            clearInterval(timer);
+            if (this.settings.enableDebugLog) {
+                console.log(`[cocos-cli] ${name} done in ${Date.now() - started}ms`);
+            }
+        };
     }
 
     private holdBracket(owner: net.Socket): void {

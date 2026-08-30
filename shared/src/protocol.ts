@@ -77,3 +77,7 @@ export {
 } from './reference-projection';
 export type * from './scene-contract';
 export { PIPE_PREFIX, instanceKey, pipePath, pipeDirectory } from './pipe-name';
+export {
+    PROMPTING_METHODS, raisesDialog, GATE_EDITOR_DIRTY, GATE_DIRTY_UNKNOWN
+} from './dialog-gate';
+export type { GateRefusalData } from './dialog-gate';

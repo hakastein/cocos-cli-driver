@@ -1,5 +1,7 @@
 import type { Driver, Hello, SceneResult } from '@cocos-cli/shared';
 import { EXIT } from '../exit.ts';
+import { gateRefusal, gateReport } from '../dialog-gate.ts';
+import type { DiskAnswer } from '../dialog-gate.ts';
 import { present } from '../render/present.ts';
 import type { CommandOutput, PresentOptions, Report } from '../render/present.ts';
 import type { Resolved, ResolvedProject } from '../resolve.ts';
@@ -40,9 +42,35 @@ export async function withClient(
     const resolved = await resolve();
     if (!resolved.ok) return noEditor(resolved.message);
     try {
-        await report(() => run(resolved.client), options);
+        await report(() => gated(resolved.client, run), options);
     } finally {
         resolved.client.close();
+    }
+}
+
+/**
+ * The driver refuses a call that would raise a modal dialog. Caught here rather than in each
+ * command: the refusal is the same wherever it happens, and this is the one place that has both a
+ * live client to ask the disk comparison of and the presenter to hand the verdict to.
+ */
+async function gated(client: Driver, run: (client: Driver) => Promise<Report>): Promise<Report> {
+    try {
+        return await run(client);
+    } catch (error) {
+        const refusal = gateRefusal(error);
+        if (!refusal) throw error;
+        return gateReport(refusal, refusal.reason === 'dirty' ? await diskAnswer(client) : null);
+    }
+}
+
+async function diskAnswer(client: Driver): Promise<DiskAnswer> {
+    try {
+        const answer = await client.scene.call('sceneDirtyAgainstDisk');
+        return answer.success === true && answer.data !== undefined
+            ? { ok: true, dirty: answer.data }
+            : { ok: false, error: (answer.success === false && answer.error) || 'no answer' };
+    } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
 }
 
