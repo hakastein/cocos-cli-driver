@@ -16,7 +16,8 @@ export type DiskAnswer =
 
 const COMMAND_OF: Record<string, string> = {
     'editor.scene.openScene': 'scene open',
-    'editor.scene.closeScene': 'scene close'
+    'editor.scene.closeScene': 'scene close',
+    'editor.builder.addTask': 'build run'
 };
 
 interface CodedError {

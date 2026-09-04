@@ -313,6 +313,8 @@ The verdict comes from the builder's exit code first: 36 is the code for a build
 
 `--timeout` bounds the *wait*, not the build — the editor keeps building past it, and the command then answers `TIMEOUT` with `state=unknown` because the driver serves one request at a time and any read-back would queue behind the build. Watch it with `build status` afterwards.
 
+`build run` is refused while the editor holds unsaved changes: the builder answers with a save-before-build dialog (Save / Ignore / Cancel) that waits for a person, and the driver serves one request at a time, so every later command for that project would queue behind it. The refusal is `FAILED`, builds nothing and says whether the scene differs from the file on disk. `scene open` and `scene close` are refused the same way. Save with `cocos scene save` first; the driver only reads the flag and never clears it.
+
 **Builds are outside the undo stack** and write to disk. A `--new-task` whose output path matches an existing row replaces that row's artefacts; the report names the task it landed on.
 
 ## Undo

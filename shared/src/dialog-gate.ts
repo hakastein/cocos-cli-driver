@@ -4,12 +4,14 @@ import type { EditorMethod } from './protocol';
  * The primitives the editor answers by raising a modal dialog when it holds its own dirty flag —
  * the one that draws the star in the title bar. The dialog waits for a person, and the driver
  * serves one request at a time, so every later request for that project queues behind it.
+ * `builder:add-task` raises `builder.is_save_scene` (Save / Ignore / Cancel) under the same flag.
  *
  * `save-as-scene` prompts as well and is absent from `EDITOR_METHODS`, so there is nothing to gate.
  */
 export const PROMPTING_METHODS: readonly `editor.${EditorMethod}`[] = [
     'editor.scene.openScene',
-    'editor.scene.closeScene'
+    'editor.scene.closeScene',
+    'editor.builder.addTask'
 ];
 
 const PROMPTING = new Set<string>(PROMPTING_METHODS);

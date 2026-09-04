@@ -136,6 +136,7 @@ all — it is the editor UI talking to its own extension, not the CLI talking to
 | `shared/src/driver.ts` | `Driver` — `EditorMethods` and `SceneFacade` as one seam |
 | `shared/src/pipe-name.ts` | project path → channel address, computed identically by both sides |
 | `shared/src/scene-contract.ts` | `SceneMethods`, `WriteReport`, `SceneResult` — the typed contract with the scene script |
+| `shared/src/dialog-gate.ts` | `PROMPTING_METHODS` — the primitives the editor answers with a modal dialog when it holds its own dirty flag (`open-scene`, `close-scene`, `builder:add-task`), and the two JSON-RPC codes the driver refuses them with |
 | `driver/src/main.ts` | extension entry: `load`/`unload`, starts and stops the `PipeServer`; also answers the panel's IPC (`openPanel`, `getDriverStatus`, `updateSettings`) |
 | `driver/src/pipe-server.ts` | the channel server: one request at a time (`p-queue`), the bracket gate that blocks other connections while one holds an open undo bracket, `hello`'s `surfaceChecksum` |
 | `driver/src/method-table.ts` | resolves a dotted method name to a callable, refusing anything `isKnownMethod` does not know |
@@ -150,6 +151,7 @@ all — it is the editor UI talking to its own extension, not the CLI talking to
 | `cli/src/driver/memory.ts` | `MemoryDriver implements Driver` — the same seam over a scene held as data, so a command's writes read back. The scene is the test's own input: nodes with components, descriptors in the editor's dump shape, `classes` for what the engine registers, `refuses` for a message that says no, and a node's `prefab` block for what the next load rebuilds — a write inside an instance records the override the editor would record. A primitive it does not model refuses by name |
 | `cli/src/driver/memory-assets.ts` | `MemoryAssetDb` — the asset half of that seam, a database held as data: the `db://` glob, and the move/copy/create/delete that rename on conflict the way the editor does |
 | `cli/src/commands/shared.ts` | `withClient` (resolve → run → present → close), `withProject` (the same without a connection) and `emit`, the one place command output touches `stdout`/`stderr` and the exit code; plus `unwrap` (`SceneResult<T>` → value or thrown error) |
+| `cli/src/dialog-gate.ts` | the driver's gate refusal recognised by its JSON-RPC code and turned into a `FAILED` that names the command (`scene open`, `scene close`, `build run`) and whether the scene differs from the file on disk |
 | `cli/src/commands/flags.ts` | the coercions an `.action()` body applies to the text Commander hands through — `booleanFlag`, `numberFlag`, `requiredNumberFlag` (the same without the `undefined`, for a `requiredOption`), `vec3Flag` (all three axes, for a node being created), `vec3PartsFlag` (an empty axis keeps its value), `jsonFlag` |
 | `cli/src/component-add.ts` | the add cascade `component add` and `node create --component` share: both spellings of a type tried in turn, then polled for — for the spelling that was ASKED for, because the editor attaches a class's declared requirement AHEAD of it and the first component to appear is that dependency (checked live 2026-08-21: `--component cc.Sprite` reported `[cc.UITransform]`). An add naming nothing that appeared answers `UNVERIFIED` and says what the node did gain, rather than picking one; plus `queryComponents`, the live component list it polls |
 | `cli/src/undo-bracket.ts` | `withUndoBracket` — one write wrapped in one undo step, `undoNote` when the editor refused or left it open |
@@ -373,6 +375,15 @@ so a read-back issued after `--timeout` ran out would queue behind the build sti
 wait would not end after all. Checked live 2026-08-21: `--timeout 2000` returned in 2.0 s with
 `TIMEOUT  no exit code  state=unknown`, and the build finished in the editor regardless. Builds are
 outside the undo stack and write to disk.
+
+**A build is refused while the editor holds its own dirty flag.** `builder:add-task` answers a
+dirty editor with the `builder.is_save_scene` dialog (Save / Ignore / Cancel), which waits for a
+person while the driver's one-at-a-time queue stops behind it. `shared/src/dialog-gate.ts`'s
+`PROMPTING_METHODS` lists it beside `open-scene` and `close-scene`: `driver/src/pipe-server.ts`
+reads `scene:query-dirty` inside the queue before forwarding any of them and refuses with
+`GATE_EDITOR_DIRTY`, and `cli/src/commands/shared.ts` turns that code into a `FAILED` naming the
+command (`cli/src/dialog-gate.ts`), with the disk comparison beside it. The flag is only read:
+saving or discarding is the caller's decision, and there is no bypass flag.
 
 `log tail` and `log search` read `{projectPath}/temp/logs/project.log` and open no connection at
 all, so they answer while the editor is busy. Two facts shape them, both from the file rather than
