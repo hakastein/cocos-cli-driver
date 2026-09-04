@@ -364,5 +364,35 @@
             { "name": "UI_2D", "value": 33554432 },
             { "name": "DEFAULT", "value": 1073741824 }
         ]
+    },
+    "numberArray": {
+        "name": "saleAmounts", "default": [], "type": "Integer", "isArray": true,
+        "readonly": false, "visible": true, "animatable": true, "extends": [],
+        "value": [
+            { "value": 600, "default": 0, "type": "Integer", "readonly": false, "visible": true, "animatable": true, "extends": [] },
+            { "value": 200, "default": 0, "type": "Integer", "readonly": false, "visible": true, "animatable": true, "extends": [] },
+            { "value": 200, "default": 0, "type": "Integer", "readonly": false, "visible": true, "animatable": true, "extends": [] },
+            { "value": 400, "default": 0, "type": "Integer", "readonly": false, "visible": true, "animatable": true, "extends": [] }
+        ],
+        "elementTypeData": {
+            "value": 0, "default": 0, "type": "Integer",
+            "readonly": false, "visible": true, "animatable": true, "extends": []
+        }
+    },
+    "cueSpec": {
+        "name": "saleCue", "type": "CueSpec",
+        "readonly": false, "visible": true, "animatable": true, "extends": [],
+        "value": {
+            "sound": {
+                "name": "sound", "value": { "uuid": "" }, "default": null, "type": "SoundEmitter",
+                "readonly": false, "visible": true, "animatable": true,
+                "extends": ["cc.Component", "cc.Object"]
+            },
+            "fx": {
+                "name": "fx", "value": { "uuid": "" }, "default": null, "type": "PrefabFX",
+                "readonly": false, "visible": true, "animatable": true,
+                "extends": ["cc.Component", "cc.Object"]
+            }
+        }
     }
 }

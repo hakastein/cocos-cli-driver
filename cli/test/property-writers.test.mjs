@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-    WRITERS, writerFor, buildClassElement, buildClassPatch, readBackMatches, readBackMismatches
+    WRITERS, writerFor, buildClassElement, buildClassPatch, readBackMatches, readBackMismatches,
+    typedDump
 } from '../src/property/writers.ts';
 import { withoutUuidWrappers } from '../src/property/verified-write.ts';
 import { MemoryDriver } from '../src/driver/memory.ts';
@@ -39,7 +40,9 @@ const VALUES = {
     gradient: { colorKeys: [{ color: { r: 255, g: 0, b: 0, a: 255 }, time: 0 }] },
     curve: { keyframes: [{ time: 0, value: 1 }] },
     enum: 1,
-    bitmask: 1108344832
+    bitmask: 1108344832,
+    numberArray: [600, 200, 400],
+    cueSpec: { sound: NODE }
 };
 
 function targetFor(name, overrides = {}) {
@@ -92,7 +95,9 @@ test('every descriptor the editor emits is claimed by exactly one writer', () =>
         gradient: 'gradient',
         curve: 'curve',
         enum: 'typed:enum',
-        bitmask: 'typed:bitmask'
+        bitmask: 'typed:bitmask',
+        numberArray: 'typed:plain',
+        cueSpec: 'nested-class'
     });
 });
 
@@ -181,6 +186,24 @@ test('only the members the write asked for are compared, so a patch is judged as
 test('a read-back the dump does not expose is a mismatch, not a silent pass', () => {
     assert.deepEqual(readBackMismatches('uuid-a', undefined, 'prefab'),
         ['prefab: expected "uuid-a", read undefined']);
+});
+
+test('an array of primitives goes out as one dump per element, with the length in isArray', () => {
+    const dump = typedDump(fixtures.numberArray, 'plain', [600, 200, 400]);
+
+    assert.equal(dump.isArray, true);
+    assert.equal(dump.type, 'Integer');
+    assert.deepEqual(dump.value, [
+        { type: 'Integer', value: 600 },
+        { type: 'Integer', value: 200 },
+        { type: 'Integer', value: 400 }
+    ]);
+});
+
+test('a scalar property keeps the bare shape: no element wrapper and no isArray', () => {
+    assert.deepEqual(typedDump(fixtures.number, 'plain', 7), { value: 7 });
+    assert.deepEqual(typedDump(fixtures.vec3, 'vec', { x: 1, y: 2, z: 3 }),
+        { type: 'cc.Vec3', value: { x: 1, y: 2, z: 3 } });
 });
 
 test('a class array element keeps its references out of the inline dump and writes them by path', () => {

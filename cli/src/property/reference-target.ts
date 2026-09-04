@@ -27,6 +27,11 @@ export interface ReferenceRequest {
     array: boolean;
 }
 
+export function spellingText(target: TargetSpelling): string {
+    if (target.kind === 'uuid') return target.uuid;
+    return target.kind === 'assetUrl' ? target.url : target.path;
+}
+
 export function spellingOf(text: string): TargetSpelling {
     if (text.indexOf(ASSET_URL) === 0) return { kind: 'assetUrl', url: text };
     if (ASSET_UUID.test(text)) return { kind: 'uuid', uuid: text };

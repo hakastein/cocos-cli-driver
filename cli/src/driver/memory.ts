@@ -29,6 +29,7 @@ export class MemoryDriver implements Driver {
     private readonly spec: MemoryScene | null;
     private readonly roots: LiveNode[] = [];
     private readonly byUuid = new Map<string, LiveNode>();
+    private readonly minted = new Set<string>();
     private readonly assets: MemoryAssetDb;
     private readonly builder: MemoryBuilder;
     private readonly refuses: MemoryRefusals;
@@ -91,9 +92,10 @@ export class MemoryDriver implements Driver {
     private mintUuid(seed: string): string {
         const base = `${seed.replace(/[^A-Za-z0-9]/g, '')}0000000000000000000000`.slice(0, 22);
         let uuid = base;
-        for (let nth = 1; this.byUuid.has(uuid); nth++) {
+        for (let nth = 1; this.minted.has(uuid); nth++) {
             uuid = `${base.slice(0, 22 - String(nth).length)}${nth}`;
         }
+        this.minted.add(uuid);
         return uuid;
     }
 
@@ -180,7 +182,7 @@ export class MemoryDriver implements Driver {
 
     private attach(node: LiveNode, component: MemoryComponent): void {
         node.components.push({
-            uuid: `${node.uuid}.c${node.components.length}`,
+            uuid: this.mintUuid(`c${node.components.length}${node.name}${component.type}`),
             type: component.type,
             enabled: component.enabled !== false,
             props: component.props ? { ...component.props } : {},
@@ -1380,9 +1382,35 @@ function writeIntoDescriptors(
     }
     const holder = container as Record<string, unknown>;
     const existing = holder[leaf];
+    const held = isDumpDescriptor(existing) ? existing.value : undefined;
+    const intoArray = Array.isArray(written.value)
+        && (Array.isArray(held) || written.isArray === true);
     holder[leaf] = {
         ...(existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {}),
         ...(written.type === undefined ? {} : { type: written.type }),
-        value: written.value
+        value: intoArray
+            ? writtenElements(Array.isArray(held) ? held : [], written, path)
+            : written.value
     };
+}
+
+/**
+ * The editor walks an array dump element by element, and each element has to be a dump of its own:
+ * a bare scalar throws `Cannot use 'in' operator to search for 'value' in <it>`, and without
+ * `isArray` the array keeps its length, so the tail of a longer one survives the write.
+ */
+function writtenElements(held: unknown[], written: PropertyDump, path: string): unknown[] {
+    const elements = written.value as unknown[];
+    for (const element of elements) {
+        if (!element || typeof element !== 'object' || !('value' in element)) {
+            throw new Error(`set-property refused '${path}': `
+                + `Cannot use 'in' operator to search for 'value' in ${String(element)}`);
+        }
+    }
+    const slots = held.slice();
+    elements.forEach((element, at) => {
+        const value = (element as { value: unknown }).value;
+        slots[at] = isDumpDescriptor(slots[at]) ? { ...(slots[at] as object), value } : element;
+    });
+    return written.isArray === true ? slots.slice(0, elements.length) : slots;
 }

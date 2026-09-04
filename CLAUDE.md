@@ -162,7 +162,7 @@ all — it is the editor UI talking to its own extension, not the CLI talking to
 | `cli/src/node-placement.ts` | where a created node actually ended up, read off the scene's own node list: its path, its parent, and whether that parent is the one that was asked for — the scene root being read off the path, since a root node's parent is the scene itself |
 | `cli/src/prefab-linkage.ts` | the `type: 'cc.Prefab'` that separates a linked instance from a flat copy, and the two-sided linkage verdict (live node vs serializer) |
 | `cli/src/asset/` | the asset database, whole: the `db://` glob and the name/limit cut a listing takes (`query.ts`), the quiescence verdict every asset command waits on — snapshot fingerprint, `settled`, the asset and component-class deltas, `AssetReport` and `copiedAddress` (`settle.ts`), and the half that asks the editor — the reads, the tree snapshot and the `settleAssetDb` poll built on them (`db.ts`) |
-| `cli/src/property/` | kind resolution (`kind.ts`), dump-value projection for read-back comparison (`readers.ts`, used by both neighbors below), the names one property answers to — the accessor and the backing field the serializer stores it under (`spelling.ts`), the writer cascade (`writers.ts`), the disk/serializer verified-write wrapper (`verified-write.ts`), the read side of a component dump — class selection, property rows, default comparison (`component-dump.ts`), uuid → scene name (`reference-index.ts`) and the spelling a reference value is written in — path, `db://` url or uuid (`reference-target.ts`) |
+| `cli/src/property/` | kind resolution (`kind.ts`), dump-value projection for read-back comparison (`readers.ts`, used by both neighbors below), the names one property answers to — the accessor and the backing field the serializer stores it under (`spelling.ts`), the writer cascade (`writers.ts`), the disk/serializer verified-write wrapper (`verified-write.ts`), the read side of a component dump — class selection, property rows, default comparison (`component-dump.ts`), uuid → scene name (`reference-index.ts`), the spelling a reference value is written in — path, `db://` url or uuid (`reference-target.ts`) and the references nested inside a value class, with the path each sits at (`nested-references.ts`) |
 | `cli/src/ecs/` | the ECS kit read off disk, no driver in any of the five: `census.ts` — the per-key sweep over the TypeScript parser's own syntax trees, moved from the MCP-era `source/ecs-census.ts` and since given the system list it reads off `class X extends system('name', …)`; `contracts.ts` — the three readings drawn on top of the per-key counts: a system named like a key, a key read outside the folder that declares it, and a key one system fills and one system reads; `receivers.ts` — what sits to the left of the dot, so `slot.node` on an engine component is not a read of the `node` key; `contributions.ts` — what a call puts on an entity, so `...spot.read()` expands to the keys the method's own literal names; `kit.ts` — the `db://assets` → directory mapping and the walk that feeds it, which follows the directory junction a shared kit is mounted into `assets/` by |
 | `cli/src/build-task.ts` | the builder's own vocabulary, kept because the editor's typings do not carry it: `BuildExitCode` (the builder answers 36 for a build that succeeded), `BUILD_PLATFORMS`, `describeTask`, and `settingConflicts` — which overrides would overwrite a Build-panel row's saved settings; plus `BuilderStatus` and `BuildRunReport`, the two shapes `render/build.ts` prints |
 | `cli/src/log/` | `{projectPath}/temp/logs/project.log`, no driver in any of the three: `entries.ts` — entry-level parsing, where the level is read from the line's own `- <level>:` field and continuation lines fold into the entry that owns them; `search.ts` — literal-by-default line search, where a blank pattern throws and regex is opt-in; `file.ts` — the read off disk, splitting the text on CRLF as well as LF because the editor writes CRLF |
@@ -198,6 +198,22 @@ kind the cascade covers is reachable from the command. A reference value arrives
 a `db://` url or a uuid; `commands/component.ts` turns it into a uuid **before** the first write,
 because an address that resolves to nothing must be refused rather than set as a value the editor
 silently turns into `null`.
+
+**An array property and a reference inside a value class each take a shape of their own**, both
+established live 2026-09-04. An array's dump carries ONE DUMP PER ELEMENT and its length in
+`isArray`: a bare `[600, 200, 400]` is refused with `Cannot use 'in' operator to search for 'value'
+in 600`, and element dumps without `isArray` write the slots they name and leave the tail of a
+longer array standing. `typedDump` (`cli/src/property/writers.ts`) emits both, and `MemoryDriver`
+models the same two rules, so a write that would be refused live is refused in the tests. A
+reference the caller wrote INSIDE a serializable `@ccclass` rides that class's own dump, which the
+editor decodes by looking the uuid up as an object rather than by resolving an address: a node path
+left there empties the slot and reports nothing, and so does a node uuid in a component-typed
+field — the decoder wants the COMPONENT's uuid, which the scene-script route
+(`resolveComponentReference`) supplies for a top-level field and nobody supplied for a nested one.
+`cli/src/property/nested-references.ts` lists those sites off the descriptor and the supplied value,
+and `commands/component.ts` resolves each through `findComponentOwners` before the first write, so
+an address naming neither a node carrying the class nor a component of it is refused with nothing
+written. A member the caller did not name is not a site and keeps its value.
 
 `node set`, `node mv` and `node dup` (`cli/src/commands/node.ts`) get their `persisted` from
 `cli/src/node-write.ts`'s `withNodePersistence`, which asks `serializedNodeValue` under the name the

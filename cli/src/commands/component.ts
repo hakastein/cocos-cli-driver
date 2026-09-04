@@ -11,14 +11,16 @@ import {
     selectComponent
 } from '../property/component-dump.ts';
 import { buildReferenceIndex, referencedUuids } from '../property/reference-index.ts';
-import { isReferenceKind, referenceRequest } from '../property/reference-target.ts';
+import { isReferenceKind, referenceRequest, spellingText } from '../property/reference-target.ts';
+import { nestedReferenceSites, siteLabel, withReferenceUuids } from '../property/nested-references.ts';
 import { resolveKind } from '../property/kind.ts';
 import { resolveNode } from './node.ts';
 import type { PollOptions } from '../component-add.ts';
-import type { WriteReport } from '@cocos-cli/shared';
+import type { ComponentOwner, WriteReport } from '@cocos-cli/shared';
 import type { ComponentAddress, RenderedWrite, Report } from '../render/present.ts';
 import type { Resolved } from '../resolve.ts';
-import type { PropertyKind } from '../property/kind.ts';
+import type { PropertyDescriptor, PropertyKind } from '../property/kind.ts';
+import type { ResolvedSite } from '../property/nested-references.ts';
 import type { WriteTarget } from '../property/writers.ts';
 import type { VerifiedWriteOptions } from '../property/verified-write.ts';
 import type { TargetSpelling } from '../property/reference-target.ts';
@@ -96,6 +98,64 @@ async function resolveReferenceValue(
     return request.array ? uuids : uuids[0];
 }
 
+interface ResolvedValue {
+    value: unknown;
+    warnings: string[];
+}
+
+/**
+ * A reference at the top of a component goes through the scene script, which turns a node into the
+ * component the field declares. One nested in a value class does not: it rides the class's own
+ * editor dump, and the editor's decoder looks the uuid up as an OBJECT — a node uuid in a
+ * component-typed slot resolves to nothing and empties it silently, as does a node path. So each
+ * nested site is resolved to the uuid the decoder will find, here, before the first write.
+ */
+async function resolveNestedReferences(
+    client: Driver, descriptor: PropertyDescriptor, value: unknown, targetComponent?: string
+): Promise<ResolvedValue> {
+    const sites = nestedReferenceSites(descriptor, value);
+    if (!sites.length) return { value, warnings: [] };
+
+    const listed = new Map<string, ComponentOwner[]>();
+    const ownersOf = async (className: string): Promise<ComponentOwner[]> => {
+        const known = listed.get(className);
+        if (known) return known;
+        const answer = await unwrap(
+            client.scene.call('findComponentOwners', { className }), 'findComponentOwners');
+        listed.set(className, answer.owners);
+        return answer.owners;
+    };
+
+    const warnings: string[] = [];
+    const resolved: ResolvedSite[] = [];
+    for (const site of sites) {
+        const request = referenceRequest(site.spelling);
+        if ('error' in request) throw new Error(`'${siteLabel(site)}': ${request.error}`);
+        const uuids: string[] = [];
+        for (const target of request.targets) {
+            const uuid = await targetUuid(client, site.kind, target);
+            if (site.kind !== 'componentRef') { uuids.push(uuid); continue; }
+            const className = targetComponent || site.declaredType;
+            const owners = await ownersOf(className);
+            const onNode = owners.filter(owner => owner.nodeUuid === uuid);
+            if (onNode.length > 1) {
+                warnings.push(`${onNode[0].nodePath} carries ${onNode.length} components of `
+                    + `${className}, and '${siteLabel(site)}' took the first`);
+            }
+            if (onNode.length) { uuids.push(onNode[0].componentUuid); continue; }
+            if (owners.some(owner => owner.componentUuid === uuid)) { uuids.push(uuid); continue; }
+            throw new Error(`'${siteLabel(site)}' takes a ${className}, and '${spellingText(target)}' `
+                + `names neither a node carrying one nor a ${className} component; the class sits on: ${
+                    owners.map(owner => owner.nodePath).join(', ') || '(no node in this scene)'}`);
+        }
+        resolved.push({
+            path: site.path,
+            uuid: request.array ? uuids : (uuids.length ? uuids[0] : null)
+        });
+    }
+    return { value: withReferenceUuids(value, resolved), warnings };
+}
+
 /**
  * `writeReference` checks nodes and components: it asks the scene what the next load will build,
  * and for a reference into a prefab instance that is the only correct answer — the scene file holds
@@ -124,12 +184,14 @@ export async function componentSet(client: Driver, spec: SetSpec): Promise<Repor
         ...(spec.targetComponent ? { refOptions: { targetComponentType: spec.targetComponent } } : {})
     };
 
-    const value = isReferenceKind(kind) ? await resolveReferenceValue(client, kind, spec.value) : spec.value;
-    if (!writerFor(target, value)) {
+    const resolved: ResolvedValue = isReferenceKind(kind)
+        ? { value: await resolveReferenceValue(client, kind, spec.value), warnings: [] }
+        : await resolveNestedReferences(client, descriptor, spec.value, spec.targetComponent);
+    if (!writerFor(target, resolved.value)) {
         throw new Error(`nothing can write property '${spec.property}' of kind '${kind}'`);
     }
 
-    const written = await verifiedWrite(target, value, client, verificationFor(kind));
+    const written = await verifiedWrite(target, resolved.value, client, verificationFor(kind));
     return {
         kind: 'write',
         target: component.className,
@@ -137,7 +199,8 @@ export async function componentSet(client: Driver, spec: SetSpec): Promise<Repor
             target: component.className, property: spec.property, value: spec.value,
             report: written.report
         }],
-        undoNote: written.undoNote
+        undoNote: written.undoNote,
+        ...(resolved.warnings.length ? { warnings: resolved.warnings } : {})
     };
 }
 

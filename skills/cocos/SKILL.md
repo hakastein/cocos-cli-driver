@@ -131,6 +131,10 @@ cocos component set "Characters/guard_1" TargetPolicy --prop target --value null
 
 An array field takes a JSON array of the same spellings. A field declared without a type takes `--target-component <type>` to say which component of the target node is meant.
 
+**A reference inside a serializable value class is spelled the same way, inside the class's own JSON.** `--prop saleCue --value '{"sound":"Audio/SfxSale"}'` writes that member and leaves every member it does not name alone; a component-typed member takes the node path and the component on that node is what lands in the slot. An address naming no node that carries the class is refused before the write, listing the nodes that do.
+
+**An array of plain values is written whole**, `--prop saleAmounts --value "[600,200,400]"`, and the array ends up exactly that long. `component array` moves and removes single elements of one already there; there is no per-element add.
+
 **An address that resolves to nothing is refused before anything is written** — code 1, the slot untouched. Checked live 2026-08-19: a path miss lists the siblings, a uuid the scene no longer holds answers `FAILED`, and in both cases the previous value is still there afterwards.
 
 Done editing — save the scene yourself with `cocos scene save`. Asking a human to press Ctrl+S is a wasted round trip.

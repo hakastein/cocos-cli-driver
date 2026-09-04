@@ -327,6 +327,12 @@ function scalarValue(kind: PropertyKind, descriptor: PropertyDescriptor | undefi
     }
 }
 
+/**
+ * An array property takes ONE DUMP PER ELEMENT, and `isArray` is what makes the editor take the
+ * length from it. Established live 2026-09-04 on a `[CCInteger]`: a bare `[600, …]` is refused with
+ * `Cannot use 'in' operator to search for 'value' in 600`, and element dumps without `isArray` write
+ * the slots they name and leave the tail of a longer array standing.
+ */
 export function typedDump(descriptor: PropertyDescriptor, kind: PropertyKind, value: unknown): ChannelStep['dump'] {
     const hinted = (type: string | undefined) =>
         !!type && (kind === 'color' || kind === 'vec' || type.indexOf('cc.') === 0);
@@ -336,7 +342,11 @@ export function typedDump(descriptor: PropertyDescriptor, kind: PropertyKind, va
     if (isArrayDescriptor(descriptor)) {
         const element = descriptor.elementTypeData || { ...descriptor, isArray: false, value: undefined };
         const items = Array.isArray(value) ? value : [value];
-        return typed(element.type, items.map(item => scalarValue(kind, element, item)));
+        const elements = items.map(item => ({
+            ...(element.type === undefined ? {} : { type: element.type }),
+            value: scalarValue(kind, element, item)
+        }));
+        return { ...(element.type === undefined ? {} : { type: element.type }), isArray: true, value: elements };
     }
     return typed(descriptor.type, scalarValue(kind, descriptor, value));
 }

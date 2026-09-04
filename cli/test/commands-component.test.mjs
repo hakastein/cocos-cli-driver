@@ -227,6 +227,88 @@ test('an asset is not looked up by node name — refused before the write', asyn
     assert.ok(!driver.calls.some(call => call.name === 'scene.setProperty'));
 });
 
+const copy = (name) => JSON.parse(JSON.stringify(fixtures[name]));
+
+const tradeScene = () => ({
+    nodes: [
+        { name: 'Counter', children: [{ name: 'Sale', components: [{
+            type: 'Trade',
+            props: { saleAmounts: copy('numberArray'), saleCue: copy('cueSpec') },
+            serialized: { saleAmounts: [600, 200, 400], saleCue: { sound: null, fx: null } }
+        }] }] },
+        { name: 'Audio', children: [
+            { name: 'SfxSale', components: [{ type: 'SoundEmitter' }] },
+            { name: 'Silent' }
+        ] }
+    ]
+});
+
+const tradeProps = (driver) => driver.componentsOf(driver.uuidOf('Counter/Sale'))[0].props;
+const stepAt = (driver, path) =>
+    driver.calls.filter(call => call.name === 'scene.setProperty')
+        .map(call => call.args[0]).find(write => write.path === path);
+
+test('an array of primitives reaches the editor as element dumps and takes the length asked for', async () => {
+    const driver = new MemoryDriver(tradeScene());
+    const output = await setOutput(driver,
+        { node: 'Counter/Sale', component: 'Trade', property: 'saleAmounts', value: [600, 200, 400] });
+
+    assert.deepEqual(stepAt(driver, '__comps__.0.saleAmounts').dump, {
+        type: 'Integer',
+        isArray: true,
+        value: [
+            { type: 'Integer', value: 600 },
+            { type: 'Integer', value: 200 },
+            { type: 'Integer', value: 400 }
+        ]
+    });
+    assert.deepEqual(tradeProps(driver).saleAmounts.value.map(element => element.value), [600, 200, 400]);
+    assert.equal(output.exitCode, 0);
+});
+
+test('a reference nested in a value class goes out as the COMPONENT uuid, not the node uuid', async () => {
+    const driver = new MemoryDriver(tradeScene());
+    const emitter = driver.componentsOf(driver.uuidOf('Audio/SfxSale'))[0];
+    await componentSet(driver, {
+        node: 'Counter/Sale', component: 'Trade', property: 'saleCue',
+        value: { sound: 'Audio/SfxSale' }
+    });
+
+    assert.deepEqual(stepAt(driver, '__comps__.0.saleCue.sound').dump,
+        { type: 'SoundEmitter', value: { uuid: emitter.uuid } });
+    assert.notEqual(emitter.uuid, driver.uuidOf('Audio/SfxSale'));
+});
+
+test('the member the caller did not name keeps its value', async () => {
+    const driver = new MemoryDriver(tradeScene());
+    await componentSet(driver, {
+        node: 'Counter/Sale', component: 'Trade', property: 'saleCue',
+        value: { sound: 'Audio/SfxSale' }
+    });
+    assert.equal(stepAt(driver, '__comps__.0.saleCue.fx'), undefined);
+});
+
+test('a component uuid in a nested slot is taken as it stands', async () => {
+    const driver = new MemoryDriver(tradeScene());
+    const emitter = driver.componentsOf(driver.uuidOf('Audio/SfxSale'))[0];
+    await componentSet(driver, {
+        node: 'Counter/Sale', component: 'Trade', property: 'saleCue', value: { sound: emitter.uuid }
+    });
+    assert.deepEqual(stepAt(driver, '__comps__.0.saleCue.sound').dump,
+        { type: 'SoundEmitter', value: { uuid: emitter.uuid } });
+});
+
+test('a node carrying no such component is refused BEFORE the write', async () => {
+    const driver = new MemoryDriver(tradeScene());
+    await assert.rejects(
+        () => componentSet(driver, {
+            node: 'Counter/Sale', component: 'Trade', property: 'saleCue',
+            value: { sound: 'Audio/Silent' }
+        }),
+        /SoundEmitter.*Audio\/SfxSale/s);
+    assert.ok(!driver.calls.some(call => call.name === 'scene.setProperty'));
+});
+
 const FAST = { timeoutMs: 30, intervalMs: 5 };
 
 const withGuard = () => new MemoryDriver({
