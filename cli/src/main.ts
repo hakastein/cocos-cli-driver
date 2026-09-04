@@ -2,6 +2,8 @@ import { Command, CommanderError } from 'commander';
 import { discover, probeAddress } from './discovery.ts';
 import { present } from './render/present.ts';
 import { emit } from './commands/shared.ts';
+import { numberFlag } from './commands/flags.ts';
+import { DEFAULT_REPLY_TIMEOUT_MS } from './reply-deadline.ts';
 import { resolveClient, resolveProject } from './resolve.ts';
 import { registerScene } from './commands/scene.ts';
 import { registerNode } from './commands/node.ts';
@@ -12,12 +14,22 @@ import { registerBuild } from './commands/build.ts';
 import { registerLog } from './commands/log.ts';
 import { EXIT } from './exit.ts';
 
+/** Seconds, as `asset`'s own waits are: everything below this line is in milliseconds. */
+function replyTimeoutMs(options: { replyTimeout?: string }): number | undefined {
+    const seconds = numberFlag('--reply-timeout', options.replyTimeout);
+    return seconds === undefined ? undefined : seconds * 1000;
+}
+
 export function buildProgram(): Command {
     const program = new Command('cocos');
     program
         .description('drives open Cocos Creator editors')
         .option('-p, --project <substring>', 'which editor, when several are open')
+        .option('--reply-timeout <seconds>', 'how long to wait for the editor to answer one '
+            + `request (default ${DEFAULT_REPLY_TIMEOUT_MS / 1000})`)
         .exitOverride();
+
+    const client = () => resolveClient(program.opts().project, replyTimeoutMs(program.opts()));
 
     program
         .command('instances')
@@ -32,12 +44,12 @@ export function buildProgram(): Command {
             emit(present({ kind: 'instances', instances: found }));
         });
 
-    registerScene(program, () => resolveClient(program.opts().project));
-    registerNode(program, () => resolveClient(program.opts().project));
-    registerComponent(program, () => resolveClient(program.opts().project));
-    registerPrefab(program, () => resolveClient(program.opts().project));
-    registerAsset(program, () => resolveClient(program.opts().project));
-    registerBuild(program, () => resolveClient(program.opts().project));
+    registerScene(program, client);
+    registerNode(program, client);
+    registerComponent(program, client);
+    registerPrefab(program, client);
+    registerAsset(program, client);
+    registerBuild(program, client);
     registerLog(program, () => resolveProject(program.opts().project));
 
     return program;

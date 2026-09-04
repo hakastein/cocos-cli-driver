@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { unwrap, withClient, withProject } from '../src/commands/shared.ts';
 import { MemoryDriver } from '../src/driver/memory.ts';
+import { ReplyTimeout } from '../src/reply-deadline.ts';
 
 /** The two process streams and the exit code are the only place a command's output can be read. */
 async function capture(body) {
@@ -23,11 +24,12 @@ async function capture(body) {
     }
 }
 
-const connected = () => {
+const connected = (missed = null) => {
     const client = new MemoryDriver({ nodes: [] });
     let closed = false;
     client.close = () => { closed = true; };
-    return { resolve: async () => ({ ok: true, client }), closed: () => closed };
+    const replies = { missed: () => missed };
+    return { resolve: async () => ({ ok: true, client, replies }), closed: () => closed };
 };
 
 const noEditor = () => async () => ({ ok: false, message: 'no editor is running' });
@@ -126,6 +128,27 @@ test('each failing class carries its own exit code out to the process', async ()
         codes[verdict] = seen.exitCode;
     }
     assert.deepEqual(codes, { UNVERIFIED: 3, UNPERSISTED: 4, TIMEOUT: 5 });
+});
+
+const wedged = { method: 'editor.scene.openScene', project: 'CyberCore', waitedMs: 60000 };
+
+test('an editor that never answered is its own verdict, not a plain failure', async () => {
+    const editor = connected(wedged);
+    const seen = await capture(() => withClient(editor.resolve, async () => {
+        throw new ReplyTimeout(wedged);
+    }));
+    assert.equal(seen.stdout, '');
+    assert.equal(seen.exitCode, 5);
+});
+
+// `queryOne`, `tasksOf` and `savedBuildOptions` all read an answer through a `catch` of their own,
+// so a command can reach its report having been told nothing at all.
+test('a command that swallowed the rejection still ends on the missed reply', async () => {
+    const editor = connected(wedged);
+    const seen = await capture(() => withClient(editor.resolve,
+        async () => ({ kind: 'action', verdict: 'ok', summary: 'the asset database knows nothing' })));
+    assert.equal(seen.stdout, '');
+    assert.equal(seen.exitCode, 5);
 });
 
 test('unwrap answers with the data the scene script sent', async () => {

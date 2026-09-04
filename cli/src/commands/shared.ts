@@ -2,6 +2,8 @@ import type { Driver, Hello, SceneResult } from '@cocos-cli/shared';
 import { EXIT } from '../exit.ts';
 import { gateRefusal, gateReport } from '../dialog-gate.ts';
 import type { DiskAnswer } from '../dialog-gate.ts';
+import { missedReplyReport, replyTimeout } from '../reply-deadline.ts';
+import type { ReplyWatch } from '../reply-deadline.ts';
 import { present } from '../render/present.ts';
 import type { CommandOutput, Report } from '../render/present.ts';
 import { raceTimeout } from '../settle.ts';
@@ -43,21 +45,32 @@ export async function withClient(
     const resolved = await resolve();
     if (!resolved.ok) return noEditor(resolved.message);
     try {
-        await report(() => gated(resolved.client, run));
+        await report(() => gated(resolved.client, run, resolved.replies));
     } finally {
         resolved.client.close();
     }
 }
 
 /**
- * The driver refuses a call that would raise a modal dialog. Caught here rather than in each
- * command: the refusal is the same wherever it happens, and this is the one place that has both a
- * live client to ask the disk comparison of and the presenter to hand the verdict to.
+ * The driver refuses a call that would raise a modal dialog, and the client gives up on a reply the
+ * editor never sends. Caught here rather than in each command: both are the same wherever they
+ * happen, and this is the one place that has both a live client to ask the disk comparison of and
+ * the presenter to hand the verdict to.
+ *
+ * A missed reply outranks whatever the body answered, because the answers a command reads with a
+ * `catch` of its own — `queryOne`, `tasksOf`, `savedBuildOptions` — turn a rejection into `null`
+ * and would report about an editor that said nothing as if it had said no.
  */
-async function gated(client: Driver, run: (client: Driver) => Promise<Report>): Promise<Report> {
+async function gated(
+    client: Driver, run: (client: Driver) => Promise<Report>, replies: ReplyWatch
+): Promise<Report> {
     try {
-        return await run(client);
+        const answer = await run(client);
+        const missed = replies.missed();
+        return missed ? missedReplyReport(missed) : answer;
     } catch (error) {
+        const missed = replyTimeout(error) || replies.missed();
+        if (missed) return missedReplyReport(missed);
         const refusal = gateRefusal(error);
         if (!refusal) throw error;
         return gateReport(refusal, refusal.reason === 'dirty' ? await diskAnswer(client) : null);

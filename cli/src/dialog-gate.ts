@@ -20,6 +20,16 @@ const COMMAND_OF: Record<string, string> = {
     'editor.builder.addTask': 'build run'
 };
 
+/**
+ * What stays true about a command once the flag is down. `SceneFacadeFSM.closeScene` refuses in
+ * general edit mode whatever the dirty flag says, so a refusal naming only the unsaved scene sends
+ * the caller off to save one for nothing.
+ */
+const PAST_THE_FLAG: Record<string, string> = {
+    'editor.scene.closeScene':
+        'The editor refuses close-scene in general edit mode either way, saved or not.'
+};
+
 interface CodedError {
     code?: unknown;
     data?: unknown;
@@ -51,12 +61,14 @@ export function gateRefusal(error: unknown): GateRefusal | null {
  */
 export function gateReport(refusal: GateRefusal, disk: DiskAnswer | null): Report {
     const command = COMMAND_OF[refusal.method] || 'the command';
+    const past = PAST_THE_FLAG[refusal.method];
     if (refusal.reason === 'unknown') {
         return {
             kind: 'action',
             verdict: 'FAILED',
             summary: `${command} was not run: the editor did not say whether it holds unsaved `
                 + `changes (${refusal.detail || 'no answer'})`
+                + (past ? ` ${past}` : '')
         };
     }
     return {
@@ -65,6 +77,7 @@ export function gateReport(refusal: GateRefusal, disk: DiskAnswer | null): Repor
         summary: `${command} was not run: the editor holds an unsaved scene, and running it would `
             + `raise a dialog that stops every command for this project until a person answers it. `
             + againstDisk(disk)
+            + (past ? ` ${past}` : '')
     };
 }
 

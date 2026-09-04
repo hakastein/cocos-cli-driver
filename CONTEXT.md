@@ -92,6 +92,13 @@ for a quiet period. The editor answers a refresh or an import before that import
 own answer alone is not this.
 _Avoid_: ready, done, imported, finished.
 
+**Missed reply**:
+One request the editor did not answer inside its budget. The driver serves one request at a time, so
+a modal dialog waiting for a person turns every command for that project into one of these; the call
+ends `TIMEOUT` naming the request and the project, and a command that answered the rejection with a
+`catch` of its own ends on it all the same.
+_Avoid_: hang, freeze, stall, disconnect, dead editor.
+
 ### The scene
 
 **Dump**:

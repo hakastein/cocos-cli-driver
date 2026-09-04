@@ -139,6 +139,13 @@ export async function sceneSave(client: Driver): Promise<Report> {
     return { kind: 'action', verdict: 'ok', summary: 'scene saved' };
 }
 
+/**
+ * Checked live 2026-09-04 on `cc_action_1a`, open the ordinary way and matching disk: the editor
+ * answered `false` and logged `Trying to close current edit scene in general edit mode is not
+ * allowed` from `SceneFacadeFSM.closeScene`. The refusal is about the editor's mode, not about
+ * unsaved work — a clean scene is refused exactly the same — so no save makes this call go through.
+ * What mode does accept it was not established here.
+ */
 export async function sceneClose(client: Driver): Promise<Report> {
     const closed = await client.editor.scene.closeScene();
     return closed === true
@@ -146,7 +153,9 @@ export async function sceneClose(client: Driver): Promise<Report> {
         : {
             kind: 'action',
             verdict: 'FAILED',
-            summary: 'the scene cannot be closed while it holds unsaved changes'
+            summary: 'nothing was closed: the editor refuses close-scene in general edit mode, '
+                + 'which is the mode a scene opened the ordinary way is edited in, and saving the '
+                + 'scene changes nothing about that'
         };
 }
 
@@ -217,7 +226,7 @@ export function registerScene(program: Command, resolve: () => Promise<Resolved>
 
     scene
         .command('close')
-        .description('close the open scene, leaving the editor with none')
+        .description('close the open scene — the editor refuses this in general edit mode')
         .action(() => withClient(resolve, sceneClose));
 
     scene

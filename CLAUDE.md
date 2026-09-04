@@ -147,11 +147,12 @@ all — it is the editor UI talking to its own extension, not the CLI talking to
 | `cli/src/main.ts` | the command tree (`buildProgram`), the entry point `bin/cocos.js` runs |
 | `cli/src/discovery.ts` | enumerates channels, probes each with `hello`, `selectInstance` narrows by `--project` |
 | `cli/src/resolve.ts` | `resolveClient` — discovery, selection and connect, in the shape every command's `resolve` thunk needs; `resolveProject` is the same choice without the connect, for a command that needs only the project's path |
-| `cli/src/driver/client.ts` | `DriverClient implements Driver` — the `editor.*`/`scene.*` facades over JSON-RPC; `editor` is generated from `EDITOR_METHODS` and typed by `EditorMethods`, `scene.call` by `SceneMethods` |
+| `cli/src/driver/client.ts` | `DriverClient implements Driver` — the `editor.*`/`scene.*` facades over JSON-RPC; `editor` is generated from `EDITOR_METHODS` and typed by `EditorMethods`, `scene.call` by `SceneMethods`; every request carries the reply budget, and the first one missed is remembered |
 | `cli/src/driver/memory.ts` | `MemoryDriver implements Driver` — the same seam over a scene held as data, so a command's writes read back. The scene is the test's own input: nodes with components, descriptors in the editor's dump shape, `classes` for what the engine registers, `refuses` for a message that says no, and a node's `prefab` block for what the next load rebuilds — a write inside an instance records the override the editor would record. A primitive it does not model refuses by name |
 | `cli/src/driver/memory-assets.ts` | `MemoryAssetDb` — the asset half of that seam, a database held as data: the `db://` glob, and the move/copy/create/delete that rename on conflict the way the editor does |
 | `cli/src/commands/shared.ts` | `withClient` (resolve → run → present → close), `withProject` (the same without a connection) and `emit`, the one place command output touches `stdout`/`stderr` and the exit code; plus `unwrap` (`SceneResult<T>` → value or thrown error) |
-| `cli/src/dialog-gate.ts` | the driver's gate refusal recognised by its JSON-RPC code and turned into a `FAILED` that names the command (`scene open`, `scene close`, `build run`) and whether the scene differs from the file on disk |
+| `cli/src/dialog-gate.ts` | the driver's gate refusal recognised by its JSON-RPC code and turned into a `FAILED` that names the command (`scene open`, `scene close`, `build run`) and whether the scene differs from the file on disk; plus `PAST_THE_FLAG`, what stays true about a command once the flag is down |
+| `cli/src/reply-deadline.ts` | the per-request budget: `DEFAULT_REPLY_TIMEOUT_MS`, the caller-bounded methods that are exempt from it, `MissedReply` and the `TIMEOUT` report naming the request and the project that went quiet |
 | `cli/src/commands/flags.ts` | the coercions an `.action()` body applies to the text Commander hands through — `booleanFlag`, `numberFlag`, `requiredNumberFlag` (the same without the `undefined`, for a `requiredOption`), `vec3Flag` (all three axes, for a node being created), `vec3PartsFlag` (an empty axis keeps its value), `jsonFlag` |
 | `cli/src/component-add.ts` | the add cascade `component add` and `node create --component` share: both spellings of a type tried in turn, then polled for — for the spelling that was ASKED for, because the editor attaches a class's declared requirement AHEAD of it and the first component to appear is that dependency (checked live 2026-08-21: `--component cc.Sprite` reported `[cc.UITransform]`). An add naming nothing that appeared answers `UNVERIFIED` and says what the node did gain, rather than picking one; plus `queryComponents`, the live component list it polls |
 | `cli/src/undo-bracket.ts` | `withUndoBracket` — one write wrapped in one undo step, `undoNote` when the editor refused or left it open |
@@ -250,7 +251,7 @@ class carries its own exit code so a caller reads what happened without parsing 
 | `FAILED` | not done; also a thrown `Error` that did not reach a report | 1 |
 | `UNVERIFIED` | done, and the read-back or the persistence question did not confirm it | 3 |
 | `UNPERSISTED` | done and verified, and a save is proven to drop it | 4 |
-| `TIMEOUT` | did not settle inside `--timeout` | 5 |
+| `TIMEOUT` | did not settle inside `--timeout`, or the editor did not answer a request inside `--reply-timeout` | 5 |
 
 `verdictExit` is the only place a verdict becomes an exit code; `worstVerdict` keeps its severity
 order and feeds only that. Two codes belong to what never reaches a report: `EXIT.USAGE` (2) for
@@ -384,6 +385,39 @@ reads `scene:query-dirty` inside the queue before forwarding any of them and ref
 `GATE_EDITOR_DIRTY`, and `cli/src/commands/shared.ts` turns that code into a `FAILED` naming the
 command (`cli/src/dialog-gate.ts`), with the disk comparison beside it. The flag is only read:
 saving or discarding is the caller's decision, and there is no bypass flag.
+
+**Every request carries a deadline, because a list of dialogs never will be complete.**
+`PROMPTING_METHODS` names three primitives; the editor is free to raise a modal over anything else it
+thinks of asking, and the driver serving one request at a time means one unanswered call stops every
+command for that project for good. So `cli/src/driver/client.ts` gives each request a budget —
+`DEFAULT_REPLY_TIMEOUT_MS`, 60 s, widened for one invocation with the root
+`--reply-timeout <seconds>` — and answers `TIMEOUT` naming the request that went unanswered and the
+project it was sent to. Measured 2026-09-04 over both open projects, every command answered inside
+350 ms with process start included, so the budget sits two orders of magnitude above the slowest call
+observed. `builder.addTask` is exempt (`replyBudgetMs`): it resolves only when the build does, and
+`build run` bounds that wait itself. Once a reply has been given up on, every later request on that
+connection rejects at once instead of spending the budget again — the driver's queue is holding the
+abandoned call, so nothing can be answered ahead of it. And the missed reply outranks whatever the
+command body answered: `queryOne`, `tasksOf` and `savedBuildOptions` read through a `catch` of their
+own, and a report built on the `null` that leaves is about an editor that said nothing while reading
+as one that said no.
+
+**What else was checked against a live editor and raises no dialog.** On a scratch folder in
+`CyberCore`, 2026-09-04: `copy-asset` and `move-asset` onto a taken address with `--overwrite`,
+`delete-asset` on one file and then on a folder that still held one, and `soft-reload` on the open
+scene — each answered in under two seconds with no dialog anywhere. `restore-prefab` is declared in
+`EditorMethods` and called by no command at all (`prefab revert` goes through the scene script's
+`revertPrefabInstance`), so it cannot wedge anything until something calls it. The candidate left
+unchecked is `save-scene` on a scene that was never saved, which the editor's own File → New Scene
+leaves behind: reaching that state means closing a scene somebody is working in, and it was not done.
+
+**`scene close` does not work in general edit mode at all.** `SceneFacadeFSM.closeScene` logs
+`Trying to close current edit scene in general edit mode is not allowed` and answers `false` —
+checked live 2026-09-04 on `cc_action_1a`, open the ordinary way and matching the file on disk, so
+the refusal is about the editor's mode and not about unsaved work, and no save gets the call through.
+The command's own refusal says that instead of blaming unsaved changes, and `dialog-gate.ts`'s
+`PAST_THE_FLAG` adds it to the dirty-flag refusal, which otherwise sends the caller off to save a
+scene for nothing. Which mode does accept `close-scene` was not established.
 
 `log tail` and `log search` read `{projectPath}/temp/logs/project.log` and open no connection at
 all, so they answer while the editor is busy. Two facts shape them, both from the file rather than
