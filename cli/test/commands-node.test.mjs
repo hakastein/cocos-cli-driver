@@ -61,10 +61,34 @@ test('a node name of the same length and alphabet as a uuid still resolves as a 
     assert.equal(called(driver, 'resolveNodePaths').length, 1);
 });
 
-test('get answers one line with the name, the state and the components', async () => {
+test('get heads its answer with the name, the state and the components', async () => {
     const text = await printed(nodeGet(scene(), { target: 'Canvas/Bg' }));
-    assert.match(text, /Bg/);
-    assert.match(text, /Sprite/);
+    assert.match(text, /^Bg {2}\[Sprite\]/);
+});
+
+test('get prints the local transform and the world one the scene answers, apart', async () => {
+    const driver = new MemoryDriver({
+        nodes: [{
+            name: 'Game',
+            position: { x: 10, y: 0, z: 0 },
+            children: [{
+                name: 'Shot',
+                position: { x: 1, y: 2, z: 3 },
+                rotation: { x: -30, y: 90, z: 0 },
+                scale: { x: 2, y: 2, z: 2 },
+                world: {
+                    position: { x: 11, y: 2, z: 3 },
+                    rotation: { x: 150, y: 90, z: 180 },
+                    scale: { x: 2, y: 2, z: 2 }
+                }
+            }]
+        }]
+    });
+    const lines = (await printed(nodeGet(driver, { target: 'Game/Shot' }))).split('\n');
+    assert.deepEqual(lines.slice(1), [
+        'local  position 1,2,3  rotation -30,90,0  scale 2,2,2',
+        'world  position 11,2,3  rotation 150,90,180  scale 2,2,2'
+    ]);
 });
 
 test('creating with a component fits in one undo bracket', async () => {

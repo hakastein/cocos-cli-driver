@@ -33,7 +33,7 @@ cocos scene tree                    # the tree: addresses, [components], (off) o
 cocos scene owners <Class>          # which nodes carry this component class
 cocos scene missing                 # components whose script no longer resolves
 cocos scene dirty                   # does the open scene differ from the file on disk
-cocos node get <path>               # one node: its components and uuid
+cocos node get <path>               # one node: components, uuid, local and world transform
 cocos component get <path> <type>   # what the inspector holds: every property with its value
 cocos prefab dump <db://path>       # what a .prefab asset holds — see Prefabs below
 cocos asset get <db://path>         # uuid, type, importer — see Assets below
@@ -44,6 +44,8 @@ cocos asset get <db://path>         # uuid, type, importer — see Assets below
 `scene missing` exits 1 when it finds anything; a component whose script no longer resolves is the slot that crashes preview on scene load. `scene dirty` compares what the serializer would emit against the file, so it answers about the file rather than about the undo stack the editor's own dirty flag counts — it names the differing paths with both values.
 
 `scene tree` is one call for the whole scene, and ordinary text grep works on it from there. Once the node is known, `node get` is cheaper.
+
+`node get` prints the transform on two lines under the node. `local` is what the node stores and `node set` writes; `world` is the engine's own composition up the parent chain, so nothing has to be multiplied out by hand. A vector is spelled `x,y,z`, the way `--pos`, `--rot` and `--scale` take it, and a rotation is Euler angles in degrees. The world rotation is converted from a quaternion, so the same orientation can come out as other angles than the local ones along the chain spell.
 
 Flags live in each group's `--help` (`cocos node --help`). The useful ones: `--uuid` adds uuids to the tree, `--json` on `instances`.
 
@@ -85,7 +87,9 @@ path 'Nope/Nothing' does not resolve — not even its first segment 'Nope'. The 
 $ cocos scene tree | grep IconController
   ├─┬ IconController#3
 $ cocos node get "Editor Scene Foreground/gizmoRoot/IconController#3"
-ok  IconController  a0mQxjmDNBXoW0V8wc2eKc
+IconController  a0mQxjmDNBXoW0V8wc2eKc
+local  position …
+world  position …
 ```
 
 Every member of the group carries the suffix, the first one included; a name that stands alone stays bare. A bare name out of a group fails with code 1 and lists the exact spellings.

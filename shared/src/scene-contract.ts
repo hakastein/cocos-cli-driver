@@ -27,10 +27,6 @@ export interface Vec3Like {
     z: number;
 }
 
-export interface QuatLike extends Vec3Like {
-    w: number;
-}
-
 export interface WriteReport {
     written: boolean;
     verified: boolean;
@@ -61,13 +57,23 @@ export interface ComponentSummary {
     enabled: boolean;
 }
 
+/** `rotation` is Euler angles in degrees, the spelling `node set --rot` takes. */
+export interface NodeTransform {
+    position: Vec3Like;
+    rotation: Vec3Like;
+    scale: Vec3Like;
+}
+
 export interface NodeInfo {
     uuid: string;
     name: string;
     active: boolean;
-    position: Vec3Like;
-    rotation: QuatLike;
-    scale: Vec3Like;
+    local: NodeTransform;
+    /**
+     * The engine's own composition up the parent chain. Its rotation is converted from the world
+     * quaternion, so the same orientation can come out as other angles than the local ones spell.
+     */
+    world: NodeTransform;
     parent: string | undefined;
     children: string[];
     components: ComponentSummary[];

@@ -2,7 +2,7 @@ import { EDITOR_METHODS, buildPathIndex, resolvePathInIndex } from '@cocos-cli/s
 import type {
     AddedSkeletalSocket, BuildTask, BuildTaskOptions, BuildTasksInfo, ComponentOwner,
     ComponentOwnerReport, Driver, DumpedComponent,
-    EditorMethods, GeneratedPrefab, MissingScriptEntry, NodeDump, NodeInfo, PathIndexNode,
+    EditorMethods, GeneratedPrefab, MissingScriptEntry, NodeDump, NodeInfo, NodeTransform, PathIndexNode,
     PathResolution, PrefabAssetDump, PrefabLinkageReport, PrefabOverrideOutcome,
     PrefabOverrideRecord, PrefabOverrideRemoval, PrefabOverrideReport, PrefabSyncReport,
     PropertyDump, ReferenceOutcomeReport, ReferencePlanReport, RemovedSkeletalSocket,
@@ -73,6 +73,7 @@ export class MemoryDriver implements Driver {
             position: spec.position || { x: 0, y: 0, z: 0 },
             rotation: spec.rotation || { x: 0, y: 0, z: 0 },
             scale: spec.scale || { x: 1, y: 1, z: 1 },
+            world: spec.world || null,
             prefab: spec.prefab || null,
             fileId: '',
             parent,
@@ -539,9 +540,8 @@ export class MemoryDriver implements Driver {
             success: true,
             data: {
                 uuid: node.uuid, name: node.name, active: node.active,
-                position: node.position,
-                rotation: { ...node.rotation, w: 1 },
-                scale: node.scale,
+                local: this.localOf(node),
+                world: this.worldOf(node),
                 parent: node.parent ? node.parent.uuid : undefined,
                 children: node.children.map(child => child.uuid),
                 components: node.components.map(component => ({
@@ -549,6 +549,23 @@ export class MemoryDriver implements Driver {
                 }))
             }
         };
+    }
+
+    private localOf(node: LiveNode): NodeTransform {
+        return { position: node.position, rotation: node.rotation, scale: node.scale };
+    }
+
+    /**
+     * The engine composes a world transform through matrices, which this scene does not model. Under
+     * parents that all hold the identity the world is the local transform; anywhere else the test
+     * gives the node its `world`.
+     */
+    private worldOf(node: LiveNode): NodeTransform {
+        if (node.world) return node.world;
+        if (node.parent && !isIdentity(this.worldOf(node.parent))) {
+            throw new Error(`MemoryDriver composes no transforms: give ${this.pathOf(node)} a world`);
+        }
+        return this.localOf(node);
     }
 
     private sceneInfo(): SceneResult<SceneInfo> {
@@ -1182,6 +1199,7 @@ export interface MemoryNode {
     position?: Vec3Like;
     rotation?: Vec3Like;
     scale?: Vec3Like;
+    world?: NodeTransform;
     components?: MemoryComponent[];
     children?: MemoryNode[];
     prefab?: MemoryPrefabInstance;
@@ -1270,6 +1288,7 @@ interface LiveNode {
     position: Vec3Like;
     rotation: Vec3Like;
     scale: Vec3Like;
+    world: NodeTransform | null;
     parent: LiveNode | null;
     children: LiveNode[];
     components: LiveComponent[];
@@ -1293,6 +1312,12 @@ type ModelledEditor = { [G in keyof EditorMethods]?: Partial<EditorMethods[G]> }
 function dumpedPosition(options: unknown): Vec3Like | undefined {
     const dump = (options as { dump?: { position?: { value?: Vec3Like } } }).dump;
     return dump && dump.position && dump.position.value ? dump.position.value : undefined;
+}
+
+function isIdentity(transform: NodeTransform): boolean {
+    const is = (vector: Vec3Like, value: number) =>
+        vector.x === value && vector.y === value && vector.z === value;
+    return is(transform.position, 0) && is(transform.rotation, 0) && is(transform.scale, 1);
 }
 
 function sleep(ms: number): Promise<void> {

@@ -166,7 +166,7 @@ all — it is the editor UI talking to its own extension, not the CLI talking to
 | `cli/src/ecs/` | the ECS kit read off disk, no driver in any of the five: `census.ts` — the per-key sweep over the TypeScript parser's own syntax trees, moved from the MCP-era `source/ecs-census.ts` and since given the system list it reads off `class X extends system('name', …)`; `contracts.ts` — the three readings drawn on top of the per-key counts: a system named like a key, a key read outside the folder that declares it, and a key one system fills and one system reads; `receivers.ts` — what sits to the left of the dot, so `slot.node` on an engine component is not a read of the `node` key; `contributions.ts` — what a call puts on an entity, so `...spot.read()` expands to the keys the method's own literal names; `kit.ts` — the `db://assets` → directory mapping and the walk that feeds it, which follows the directory junction a shared kit is mounted into `assets/` by |
 | `cli/src/build-task.ts` | the builder's own vocabulary, kept because the editor's typings do not carry it: `BuildExitCode` (the builder answers 36 for a build that succeeded), `BUILD_PLATFORMS`, `describeTask`, and `settingConflicts` — which overrides would overwrite a Build-panel row's saved settings; plus `BuilderStatus` and `BuildRunReport`, the two shapes `render/build.ts` prints |
 | `cli/src/log/` | `{projectPath}/temp/logs/project.log`, no driver in any of the three: `entries.ts` — entry-level parsing, where the level is read from the line's own `- <level>:` field and continuation lines fold into the entry that owns them; `search.ts` — literal-by-default line search, where a blank pattern throws and regex is opt-in; `file.ts` — the read off disk, splitting the text on CRLF as well as LF because the editor writes CRLF |
-| `cli/src/render/` | `verdict.ts` (the five verdicts, `verdictExit` and `worstVerdict`) and `present.ts` (the `Report` union and `present`) over eleven formatters — `tree.ts`, `report.ts`, `property.ts`, `prefab.ts`, `asset.ts`, `scene.ts`, `component.ts` (the class registry and a node's bone sockets, both listings), `instances.ts`, `build.ts`, `log.ts`, over `columns.ts`'s `padRight`/`columnWidth`. Only `present.ts` is imported from outside `render/` |
+| `cli/src/render/` | `verdict.ts` (the five verdicts, `verdictExit` and `worstVerdict`) and `present.ts` (the `Report` union and `present`) over the formatters — `tree.ts`, `report.ts`, `property.ts`, `prefab.ts`, `asset.ts`, `scene.ts`, `node.ts` (one node's head and its local and world transform), `component.ts` (the class registry and a node's bone sockets, both listings), `instances.ts`, `build.ts`, `log.ts`, over `columns.ts`'s `padRight`/`columnWidth`. Only `present.ts` is imported from outside `render/` |
 
 Everything a command decides that does not need a live editor lives in a pure module beside
 `commands/`: `property/`, `render/`, `ecs/`, `log/`, `build-task.ts`, `asset/query.ts`, `asset/settle.ts`, `node-type.ts`,
@@ -305,7 +305,7 @@ presenter's option parameter, its structural field and its render branch. `asset
 that is a text escape hatch rather than a format. `cocos instances` gained a `surface` column, which
 is the one field `--json` opened on its own.
 
-The ten `render/*` formatters are internal to the presenter: nothing outside `render/` imports
+The `render/*` formatters are internal to the presenter: nothing outside `render/` imports
 them.
 
 **Undo brackets.** `withUndoBracket(client, nodeUuid, write)` (`cli/src/undo-bracket.ts`) wraps a

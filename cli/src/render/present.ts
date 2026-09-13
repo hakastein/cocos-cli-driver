@@ -1,5 +1,5 @@
 import type {
-    ComponentOwnerReport, Hello, MissingScriptDump, PrefabAssetDump, PrefabOverrideReport,
+    ComponentOwnerReport, Hello, MissingScriptDump, NodeInfo, PrefabAssetDump, PrefabOverrideReport,
     SceneDirtyReport, SkeletalSocketList
 } from '@cocos-cli/shared';
 import { verdictExit } from './verdict.ts';
@@ -10,6 +10,7 @@ import {
 import { buildRunHead, buildVerdict, buildWarnings, renderBuildRun, renderBuilderStatus } from './build.ts';
 import { logSearchHead, logTailHead, renderLogEntries, renderLogMatches } from './log.ts';
 import { renderClassList, renderSockets, socketsHead } from './component.ts';
+import { nodeHead, renderNodeTransforms } from './node.ts';
 import { renderWrites, writesVerdict } from './report.ts';
 import { renderTree } from './tree.ts';
 import { renderInstances } from './instances.ts';
@@ -76,6 +77,7 @@ export type Report =
     | { kind: 'assetUsers'; users: AssetUsers }
     /** The classes the scene's engine knows: under a base when one was named, the add menu when not. */
     | { kind: 'classList'; classes: ClassEntry[] }
+    | { kind: 'node'; info: NodeInfo }
     | { kind: 'nodeSockets'; sockets: SkeletalSocketList }
     | { kind: 'sceneTree'; nodes: DumpNode[]; options: TreeOptions }
     | { kind: 'sceneOwners'; owners: ComponentOwnerReport }
@@ -166,6 +168,9 @@ function render(report: Report): Rendered {
 
         case 'classList':
             return { verdict: 'ok', text: renderClassList(report.classes) };
+
+        case 'node':
+            return { verdict: 'ok', head: nodeHead(report.info), text: renderNodeTransforms(report.info) };
 
         case 'nodeSockets':
             return {

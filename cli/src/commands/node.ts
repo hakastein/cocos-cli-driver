@@ -37,18 +37,7 @@ export async function resolveNode(client: Driver, pathOrUuid: string): Promise<s
 
 export async function nodeGet(client: Driver, spec: { target: string }): Promise<Report> {
     const uuid = await resolveNode(client, spec.target);
-    const info = await unwrap(client.scene.call('getNodeInfo', uuid), 'getNodeInfo');
-    const components = (info.components || [])
-        .map(component => component.enabled === false
-            ? `${component.className}(off)` : component.className)
-        .join(',');
-    return {
-        kind: 'action',
-        verdict: 'ok',
-        summary: `${info.name}${info.active ? '' : '  (off)'}`
-            + (components ? `  [${components}]` : '')
-            + `  ${info.uuid}`
-    };
+    return { kind: 'node', info: await unwrap(client.scene.call('getNodeInfo', uuid), 'getNodeInfo') };
 }
 
 export interface CreateSpec {

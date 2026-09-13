@@ -1,9 +1,14 @@
 import { siblingLabels } from '@cocos-cli/shared';
-import type { SceneMethods } from '@cocos-cli/shared';
+import type { SceneMethods, Vec3Like } from '@cocos-cli/shared';
 import { componentClassName, findNodeByUuid, requireActiveScene } from './engine.ts';
+
+function xyz(vector: any): Vec3Like {
+    return { x: vector.x, y: vector.y, z: vector.z };
+}
 
 export const getNodeInfo: SceneMethods['getNodeInfo'] = (nodeUuid) => {
     try {
+        const { Vec3 } = require('cc');
         const scene = requireActiveScene();
         const node = findNodeByUuid(scene, nodeUuid);
         return {
@@ -12,9 +17,16 @@ export const getNodeInfo: SceneMethods['getNodeInfo'] = (nodeUuid) => {
                 uuid: node.uuid,
                 name: node.name,
                 active: node.active,
-                position: node.position,
-                rotation: node.rotation,
-                scale: node.scale,
+                local: {
+                    position: xyz(node.position),
+                    rotation: xyz(node.eulerAngles),
+                    scale: xyz(node.scale)
+                },
+                world: {
+                    position: xyz(node.worldPosition),
+                    rotation: xyz(node.worldRotation.getEulerAngles(new Vec3())),
+                    scale: xyz(node.worldScale)
+                },
                 parent: node.parent?.uuid,
                 children: node.children.map((child: any) => child.uuid),
                 components: node.components.map((comp: any) => ({
@@ -91,9 +103,9 @@ export const dumpSceneNodes: SceneMethods['dumpSceneNodes'] = (options = {}) => 
                     }));
                 }
                 if (withXform) {
-                    entry.position = { x: child.position.x, y: child.position.y, z: child.position.z };
-                    entry.rotation = { x: child.eulerAngles.x, y: child.eulerAngles.y, z: child.eulerAngles.z };
-                    entry.scale = { x: child.scale.x, y: child.scale.y, z: child.scale.z };
+                    entry.position = xyz(child.position);
+                    entry.rotation = xyz(child.eulerAngles);
+                    entry.scale = xyz(child.scale);
                 }
                 nodes.push(entry);
                 walk(child, path);
