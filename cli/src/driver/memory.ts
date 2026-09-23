@@ -36,10 +36,12 @@ export class MemoryDriver implements Driver {
     /** Property overrides the editor recorded, keyed by the uuid of the instance root holding them. */
     private readonly overrides = new Map<string, PrefabOverrideRecord[]>();
     private currentScene: string;
+    private editedAsset: string;
 
     constructor(spec?: MemoryScene) {
         this.spec = spec || null;
         this.currentScene = (spec && spec.uuid) || 'scene-uuid';
+        this.editedAsset = this.currentScene;
         this.assets = new MemoryAssetDb((spec && spec.assets) || {});
         this.builder = (spec && spec.builder) || {};
         this.refuses = (spec && spec.refuses) || {};
@@ -349,8 +351,11 @@ export class MemoryDriver implements Driver {
                 },
                 openScene: async uuid => {
                     const opens = (this.spec && this.spec.opensAs) || {};
-                    this.currentScene = opens[uuid] || uuid;
+                    const shownIn = (this.spec && this.spec.shownIn) || {};
+                    this.editedAsset = opens[uuid] || uuid;
+                    this.currentScene = shownIn[this.editedAsset] || this.editedAsset;
                 },
+                queryCurrentScene: async () => this.editedAsset,
                 saveScene: async () => undefined,
                 beginRecording: async () => {
                     if (this.refuses.beginRecording) throw new Error(this.refuses.beginRecording);
@@ -1244,6 +1249,11 @@ export interface MemoryScene {
      * the editor cannot load leaves a fresh, never-saved scene and no error.
      */
     opensAs?: Record<string, string>;
+    /**
+     * Asset uuid → the uuid of the scene the editor shows it in. A prefab opens inside a scene of its
+     * own, so `query-current-scene` names the prefab and the scene root carries another uuid.
+     */
+    shownIn?: Record<string, string>;
     /** The class names the engine registers; a scene naming none registers every spelling. */
     classes?: string[];
     /**

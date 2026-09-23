@@ -72,23 +72,28 @@ const OPEN_POLL: PollOptions = { timeoutMs: 10_000, intervalMs: 100 };
 
 interface SettledScene {
     info: SceneInfo | null;
+    /** The asset the editor is editing. For a prefab it differs from `info.uuid`, which is the
+     *  scene the editor wraps the prefab in. */
+    editing: string | null;
     /** What the scene script answered instead, when it refused to say which scene is open. */
     refusal?: string;
 }
 
-/** Which scene the editor is on once it has settled on the one asked for, or the last answer. */
+/** Which asset the editor is on once it has settled on the one asked for, or the last answer. */
 async function openedScene(
     client: Driver, wanted: string, poll?: PollOptions
 ): Promise<SettledScene> {
     let info: SceneInfo | null = null;
+    let editing: string | null = null;
     let refusal: string | undefined;
     await settle(async () => {
+        editing = await client.editor.scene.queryCurrentScene();
         const answer = await client.scene.call('getCurrentSceneInfo');
         info = answer.success ? answer.data : null;
         refusal = answer.success ? undefined : answer.error;
-        return info !== null && info.uuid === wanted;
+        return info !== null && editing === wanted;
     }, poll || OPEN_POLL);
-    return { info, refusal };
+    return { info, editing, refusal };
 }
 
 /**
@@ -110,7 +115,7 @@ export async function sceneOpen(
     }
 
     await client.editor.scene.openScene(asset.uuid);
-    const { info: opened, refusal } = await openedScene(client, asset.uuid, spec.poll);
+    const { info: opened, editing, refusal } = await openedScene(client, asset.uuid, spec.poll);
 
     if (opened === null) {
         return {
@@ -120,11 +125,11 @@ export async function sceneOpen(
                 refusal || 'no answer'})`
         };
     }
-    if (opened.uuid !== asset.uuid) {
+    if (editing !== asset.uuid) {
         return {
             kind: 'action',
             verdict: 'FAILED',
-            summary: `${asset.url} is not open; the editor is on '${opened.name}' (${opened.uuid})`
+            summary: `${asset.url} is not open; the editor is on '${opened.name}' (${editing ?? opened.uuid})`
         };
     }
     return {

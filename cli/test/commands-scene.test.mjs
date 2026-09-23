@@ -151,6 +151,19 @@ test('a scene other than the one asked for left open is a failure rather than an
     assert.equal(output.exitCode, 1);
 });
 
+test('a prefab shown inside a scene of its own is the prefab open', async () => {
+    const prefab = '3a8f811f-87e7-4db0-96b2-2ac46503c65b';
+    const driver = new MemoryDriver({
+        ...SCENE_ON_DISK,
+        assets: { ...SCENE_ON_DISK.assets, 'db://assets/cc_hero.prefab': prefab },
+        shownIn: { [prefab]: 'bdek5w61xETJRSLGMfiJ3c' }
+    });
+    const output = present(await sceneOpen(driver,
+        { target: 'db://assets/cc_hero.prefab', poll: { timeoutMs: 20, intervalMs: 5 } }));
+    assert.match(output.stdout, /^opened db:\/\/assets\/cc_hero\.prefab/);
+    assert.equal(output.exitCode, 0);
+});
+
 // A chain of commands has to stop on a scene nobody could confirm is open, rather than build the
 // next step on it.
 test('a scene script that will not say which scene is open is UNVERIFIED and non-zero', async () => {
