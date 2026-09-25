@@ -1,8 +1,5 @@
 import type { SceneMethods } from '@cocos-cli/shared';
-import {
-    enclosingPrefabInstance, fileIdIndex, findNodeByUuid, instanceOverridesFor, prefabFileId,
-    requireActiveScene
-} from './engine.ts';
+import { enclosingPrefabInstance, fileIdIndex, findNodeByUuid, instanceOverridesFor, prefabFileId, requireActiveScene } from './engine.ts';
 
 interface Divergence {
     uncovered: string[];

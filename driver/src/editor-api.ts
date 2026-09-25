@@ -1,27 +1,6 @@
-import type {
-    AssetInfo as EditorAssetInfo,
-    AssetOperationOption,
-    QueryAssetsOption,
-} from '@cocos/creator-types/editor/packages/asset-db/@types/public';
-import type {
-    CreateComponentOptions,
-    CreateNodeOptions,
-    CutNodeOptions,
-    ExecuteComponentMethodOptions,
-    MoveArrayOptions,
-    PasteNodeOptions,
-    QueryClassesOptions,
-    RemoveArrayOptions,
-    RemoveComponentOptions,
-    RemoveNodeOptions,
-    ResetComponentOptions,
-    ResetNodeOptions,
-    SetPropertyOptions,
-} from '@cocos/creator-types/editor/packages/scene/@types/public';
-import type {
-    BuildTask, BuildTaskOptions, BuildTasksInfo, EditorMethods, NodeDump,
-    PropertyWriteOptions, SceneNodeTree, SceneScriptCall
-} from '@cocos-cli/shared';
+import type { AssetInfo as EditorAssetInfo, AssetOperationOption, QueryAssetsOption } from '@cocos/creator-types/editor/packages/asset-db/@types/public';
+import type { CreateComponentOptions, CreateNodeOptions, CutNodeOptions, ExecuteComponentMethodOptions, MoveArrayOptions, PasteNodeOptions, QueryClassesOptions, RemoveArrayOptions, RemoveComponentOptions, RemoveNodeOptions, ResetComponentOptions, ResetNodeOptions, SetPropertyOptions } from '@cocos/creator-types/editor/packages/scene/@types/public';
+import type { BuildTask, BuildTaskOptions, BuildTasksInfo, EditorMethods, NodeDump, PropertyWriteOptions, SceneNodeTree, SceneScriptCall } from '@cocos-cli/shared';
 
 export type { EditorAssetInfo, AssetOperationOption };
 

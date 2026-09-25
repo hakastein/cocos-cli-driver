@@ -1,12 +1,6 @@
-import {
-    buildPathIndex, resolvePathInIndex, siblingLabels, diffSerialized, liveNodesBySerializedIndex
-} from '@cocos-cli/shared';
-import type {
-    DeclaredProperty, PrefabLinkageReport, SceneMethods, SceneResult, SerializedValue
-} from '@cocos-cli/shared';
-import {
-    ctorIsA, enclosingPrefabInstance, findNodeByUuid, plainSerialized, requireActiveScene
-} from './engine.ts';
+import { buildPathIndex, resolvePathInIndex, siblingLabels, diffSerialized, liveNodesBySerializedIndex } from '@cocos-cli/shared';
+import type { DeclaredProperty, PrefabLinkageReport, SceneMethods, SceneResult, SerializedValue } from '@cocos-cli/shared';
+import { ctorIsA, enclosingPrefabInstance, findNodeByUuid, plainSerialized, requireActiveScene } from './engine.ts';
 import type { SerializedNodeNaming } from './engine.ts';
 import { overlaidReferenceValue } from './reference-write.ts';
 

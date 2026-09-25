@@ -5,9 +5,7 @@ import { createHash } from 'crypto';
 import split2 from 'split2';
 import PQueue from 'p-queue';
 import { JSONRPCErrorException, JSONRPCServer } from 'json-rpc-2.0';
-import {
-    ALL_METHODS, GATE_DIRTY_UNKNOWN, GATE_EDITOR_DIRTY, pipePath, raisesDialog
-} from '@cocos-cli/shared';
+import { ALL_METHODS, GATE_DIRTY_UNKNOWN, GATE_EDITOR_DIRTY, pipePath, raisesDialog } from '@cocos-cli/shared';
 import type { Hello } from '@cocos-cli/shared';
 import { resolveMethod } from './method-table.ts';
 import type { EditorApi } from './editor-api.ts';

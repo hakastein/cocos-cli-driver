@@ -1,13 +1,7 @@
-import {
-    projectAfterReload, contradictedOverrides, liveNodesBySerializedIndex
-} from '@cocos-cli/shared';
+import { projectAfterReload, contradictedOverrides, liveNodesBySerializedIndex } from '@cocos-cli/shared';
 import type { ReferenceOverride } from '@cocos-cli/shared';
 import type { SceneMethods } from '@cocos-cli/shared';
-import {
-    componentClassName, ctorIsA, declaredPropertyCtor, enclosingPrefabInstance, fileIdIndex,
-    findComponentByUuid, findNodeByUuid, findNodeByUuidOrNull, instanceOverridesFor, instanceTargets,
-    prefabFileId, requireActiveScene, serializedEntityUuid, targetIn
-} from './engine.ts';
+import { componentClassName, ctorIsA, declaredPropertyCtor, enclosingPrefabInstance, fileIdIndex, findComponentByUuid, findNodeByUuid, findNodeByUuidOrNull, instanceOverridesFor, instanceTargets, prefabFileId, requireActiveScene, serializedEntityUuid, targetIn } from './engine.ts';
 
 /**
  * Every `cc.TargetOverrideInfo` in the scene, with the object holding it. They sit on the scene's
