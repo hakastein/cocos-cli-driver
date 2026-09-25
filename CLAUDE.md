@@ -154,7 +154,7 @@ all — it is the editor UI talking to its own extension, not the CLI talking to
 | `cli/src/dialog-gate.ts` | the driver's gate refusal recognised by its JSON-RPC code and turned into a `FAILED` that names the command (`scene open`, `scene close`, `build run`) and whether the scene differs from the file on disk; plus `PAST_THE_FLAG`, what stays true about a command once the flag is down |
 | `cli/src/reply-deadline.ts` | the per-request budget: `DEFAULT_REPLY_TIMEOUT_MS`, the caller-bounded methods that are exempt from it, `MissedReply` and the `TIMEOUT` report naming the request and the project that went quiet |
 | `cli/src/commands/flags.ts` | the coercions an `.action()` body applies to the text Commander hands through — `booleanFlag`, `numberFlag`, `requiredNumberFlag` (the same without the `undefined`, for a `requiredOption`), `vec3Flag` (all three axes, for a node being created), `vec3PartsFlag` (an empty axis keeps its value), `jsonFlag` |
-| `cli/src/component-add.ts` | the add cascade `component add` and `node create --component` share: both spellings of a type tried in turn, then polled for — for the spelling that was ASKED for, because the editor attaches a class's declared requirement AHEAD of it and the first component to appear is that dependency (checked live 2026-08-21: `--component cc.Sprite` reported `[cc.UITransform]`). An add naming nothing that appeared answers `UNVERIFIED` and says what the node did gain, rather than picking one; plus `queryComponents`, the live component list it polls |
+| `cli/src/component-add.ts` | the add cascade `component add` and `node create --component` share: both spellings of a type tried in turn, then polled for — for the spelling that was ASKED for, because the editor attaches a class's declared requirement AHEAD of it and the first component to appear is that dependency (checked live 2026-08-21: `--component cc.Sprite` reported `[cc.UITransform]`). An add naming nothing that appeared answers `UNVERIFIED` and says what the node did gain, rather than picking one. Every call adds: a component that appeared is told from one already there by its uuid, and is reported by its address on the node (`SplineAnimate#2`); plus `queryComponents`, the live component list it polls |
 | `cli/src/undo-bracket.ts` | `withUndoBracket` — one write wrapped in one undo step, `undoNote` when the editor refused or left it open |
 | `cli/src/node-snapshot.ts` | the editor's descriptor-wrapped node dump projected to what a write reads back |
 | `cli/src/node-transform.ts` | `parseVec3` (an empty axis keeps its value), and the 2D-node clamp that zeroes `position.z` / `rotation.x,y` and says which value it destroyed |
@@ -240,6 +240,19 @@ established live 2026-08-22 (PLY-22) after every such write had answered `UNPERS
   override resolves to `undefined`. `driver/src/scene/engine.ts` generates the map with the engine's
   own `generateTargetMap`, which is what the next load does anyway, and `instanceTargets`/`targetIn`
   are the one route to it — the target overrides in `scene/reference-write.ts` read it the same way.
+
+**A node can carry several components of one class**, and a class id names only the first of them.
+Checked live 2026-09-25 on a scratch node in `cc_action_1a`: `create-component` on a node already
+carrying `SplineAnimate` attached a second one, and `query-node` names each component's own uuid at
+`__comps__[i].value.uuid`. So a component is addressed like a same-named sibling node —
+`selectComponent` (`cli/src/property/component-dump.ts`) takes `Class#N` in component order, refuses a
+bare class the node carries more than once, and hands every write its `sameClassIndex` and its uuid.
+`serializedComponentValue` and `prefabInstancePropertyOutcome` take that uuid and name the component
+they answered about; a scene script loaded before they took it ignores it and answers about the first
+of the class, so `verified-write.ts` leaves `persisted` at `null` for any other one rather than
+compare the write against its neighbour's value. A reference aimed at a node goes through the same
+rule on the target side (`componentOnTarget` in `commands/component.ts`): the scene script's
+`getComponent` would take the first silently.
 
 `cli/src/render/report.ts`'s `writeVerdict` turns a `WriteReport` into one of the five verdicts
 below. `persisted: false` on the editor channel is `UNPERSISTED`; `persisted: null` is `UNVERIFIED`,

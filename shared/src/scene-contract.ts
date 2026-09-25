@@ -307,6 +307,8 @@ export interface SerializedValue {
      * so the value is reported with that slot empty and nothing may be concluded from it.
      */
     unnamedReference?: boolean;
+    /** The component the answer is about; a node's own property answers without one. */
+    componentUuid?: string;
 }
 
 export interface PrefabOverrideOutcome {
@@ -323,6 +325,8 @@ export interface PrefabOverrideOutcome {
     /** Paths where the two sides hold objects of different classes, which the editor will not diff. */
     untyped: string[];
     reason?: string;
+    /** The component the answer is about. */
+    componentUuid?: string;
 }
 
 export interface PrefabLinkageReport {
@@ -443,12 +447,19 @@ export interface SceneMethods {
         localID?: string,
         index?: number,
     ): SceneResult<PrefabOverrideRemoval>;
-    serializedComponentValue(nodeUuid: string, cid: string, property: string): SceneResult<SerializedValue>;
+    /**
+     * `componentUuid` names one component when the node carries several of the class; without it the
+     * answer is about the first component `cid` names.
+     */
+    serializedComponentValue(
+        nodeUuid: string, cid: string, property: string, componentUuid?: string
+    ): SceneResult<SerializedValue>;
     serializedNodeValue(nodeUuid: string, property: string): SceneResult<SerializedValue>;
     prefabInstancePropertyOutcome(
         nodeUuid: string,
         cid: string,
         property: string,
+        componentUuid?: string,
     ): SceneResult<PrefabOverrideOutcome>;
     nodePrefabLinkage(nodeUuid: string): SceneResult<PrefabLinkageReport>;
     resolveComponentReference(args?: any): SceneResult<ReferencePlanReport>;

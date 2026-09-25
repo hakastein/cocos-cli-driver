@@ -21,8 +21,19 @@ test('a node is indexed by its address in the scene', () => {
 
 test('a component is indexed by the node address and its own class', () => {
     assert.deepEqual(buildReferenceIndex(nodes()).get('comp-root'), {
-        kind: 'component', path: 'Game', className: 'GameRoot'
+        kind: 'component', path: 'Game', component: 'GameRoot'
     });
+});
+
+test('a component of a class its node carries twice is indexed by its position', () => {
+    const index = buildReferenceIndex([{
+        uuid: 'node-ship', name: 'Dropship', path: 'Game/Dropship',
+        components: [
+            { uuid: 'comp-arrive', className: 'SplineAnimate' },
+            { uuid: 'comp-leave', className: 'SplineAnimate' }
+        ]
+    }]);
+    assert.equal(index.get('comp-leave').component, 'SplineAnimate#2');
 });
 
 test('a node with no address is called by its name', () => {

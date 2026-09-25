@@ -1,6 +1,6 @@
 import { buildPathIndex, resolvePathInIndex, siblingLabels, diffSerialized, liveNodesBySerializedIndex } from '@cocos-cli/shared';
 import type { DeclaredProperty, PrefabLinkageReport, SceneMethods, SceneResult, SerializedValue } from '@cocos-cli/shared';
-import { ctorIsA, enclosingPrefabInstance, findNodeByUuid, plainSerialized, requireActiveScene } from './engine.ts';
+import { componentOnNode, ctorIsA, enclosingPrefabInstance, findNodeByUuid, plainSerialized, requireActiveScene } from './engine.ts';
 import type { SerializedNodeNaming } from './engine.ts';
 import { overlaidReferenceValue } from './reference-write.ts';
 
@@ -247,26 +247,31 @@ function carriedByOverrideInstead(where: string, whose: string): SceneResult<Ser
     };
 }
 
-export const serializedComponentValue: SceneMethods['serializedComponentValue'] = (nodeUuid, cid, property) => {
+export const serializedComponentValue: SceneMethods['serializedComponentValue'] = (
+    nodeUuid, cid, property, componentUuid,
+) => {
     try {
-        const cc = require('cc');
         const scene = requireActiveScene();
         const node = findNodeByUuid(scene, nodeUuid);
-        const component = (node.components || []).find((c: any) =>
-            c && (cc.js as any)._getClassId(c.constructor) === cid);
+        const component = componentOnNode(node, cid, componentUuid);
         if (!component) {
-            return { success: false, error: `No component with cid '${cid}' on node ${nodeUuid}` };
+            return {
+                success: false,
+                error: `No component ${componentUuid || `with cid '${cid}'`} on node ${nodeUuid}`
+            };
         }
+        const about = (answer: SceneResult<SerializedValue>): SceneResult<SerializedValue> =>
+            answer.success ? { success: true, data: { ...answer.data, componentUuid: component.uuid } } : answer;
 
         const file = serializeScene(scene);
         const componentObject = file.objects.find((entry) => entry && entry._id === component.uuid);
         if (!componentObject) {
-            return carriedByOverrideInstead(`'${node.name}' is inside a prefab instance`, 'component');
+            return about(carriedByOverrideInstead(`'${node.name}' is inside a prefab instance`, 'component'));
         }
 
         const at = valueAtPath(file, componentObject, property);
-        if (!at.found) return { success: true, data: { found: false, value: undefined } };
-        return foundValue(file, overlaidReferenceValue(scene, component, property, at.value));
+        if (!at.found) return about({ success: true, data: { found: false, value: undefined } });
+        return about(foundValue(file, overlaidReferenceValue(scene, component, property, at.value)));
     } catch (error: any) {
         return { success: false, error: error.message || String(error) };
     }

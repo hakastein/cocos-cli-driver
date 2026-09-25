@@ -1,8 +1,10 @@
+import { siblingLabels } from '@cocos-cli/shared';
 import type { NodeInfo, NodeTransform, Vec3Like } from '@cocos-cli/shared';
 
 export function nodeHead(info: NodeInfo): string {
+    const labels = siblingLabels(info.components.map(component => ({ name: component.className })));
     const components = info.components
-        .map(component => component.enabled === false ? `${component.className}(off)` : component.className)
+        .map((component, at) => component.enabled === false ? `${labels[at]}(off)` : labels[at])
         .join(',');
     return `${info.name}${info.active ? '' : '  (off)'}`
         + (components ? `  [${components}]` : '')

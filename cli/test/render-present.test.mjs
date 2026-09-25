@@ -138,7 +138,10 @@ const reading = (over = {}) => ({
 
 const address = {
     nodePath: 'Canvas/Bg', nodeUuid: 'u-bg',
-    choice: { index: 0, className: 'Npc', cid: null, enabled: true, sameClassCount: 1 }
+    choice: {
+        index: 0, className: 'Npc', label: 'Npc', sameClassIndex: 0, uuid: 'c-npc', cid: null,
+        enabled: true
+    }
 };
 
 // A hidden property is reachable only through --prop, so this read is the only place that can say

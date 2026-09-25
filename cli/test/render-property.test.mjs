@@ -5,7 +5,7 @@ import { formatReading, renderComponentReading } from '../src/render/property.ts
 
 const LABELS = {
     'node-hero': { kind: 'node', path: 'Characters/cc_hero' },
-    'comp-grid': { kind: 'component', path: 'Game/Enemies', className: 'NavGridProvider' },
+    'comp-grid': { kind: 'component', path: 'Game/Enemies', component: 'NavGridProvider' },
     'asset-mesh': { kind: 'asset', path: 'db://assets/model/cc_scene.fbx' }
 };
 const lookup = uuid => LABELS[uuid];

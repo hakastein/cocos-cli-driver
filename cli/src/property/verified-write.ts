@@ -81,18 +81,35 @@ export async function withSerializerVerdict(
         `a save would not carry this write — the serializer emits ${mismatches.join('; ')}`);
 }
 
+/**
+ * A scene script that predates the component's uuid in these questions ignores it, answers about the
+ * first component of the class and names none — which is this one only when this one is the first.
+ */
+function answeredAbout(target: WriteTarget, answered: string | undefined): boolean {
+    return answered === undefined || target.componentUuid === undefined
+        ? !target.sameClassIndex
+        : answered === target.componentUuid;
+}
+
+const ANOTHER_COMPONENT = 'the scene script answered about another component of the class than the '
+    + 'one written';
+
 async function overrideOutcome(
     target: WriteTarget, cid: string, property: string, ctx: Driver
 ): Promise<PrefabOverrideOutcome | string> {
     let result: SceneResult<PrefabOverrideOutcome>;
     try {
-        result = await ctx.scene.call('prefabInstancePropertyOutcome', target.nodeUuid, cid, property);
+        result = await ctx.scene.call(
+            'prefabInstancePropertyOutcome', target.nodeUuid, cid, property, target.componentUuid);
     } catch (error) {
         return `the prefab override behind this write was not read (${messageOf(error)})`;
     }
     if (!result || result.success !== true) {
         return 'the prefab override behind this write was not read '
             + `(${(result && result.error) || 'no answer'})`;
+    }
+    if (!answeredAbout(target, result.data.componentUuid)) {
+        return `the prefab override behind this write was not read (${ANOTHER_COMPONENT})`;
     }
     return result.data;
 }
@@ -150,10 +167,14 @@ async function serializedValue(target: WriteTarget, cid: string, ctx: Driver): P
     let problem = '';
     let inPrefabInstance = false;
     for (const property of spellings) {
-        const result = await ctx.scene.call('serializedComponentValue', target.nodeUuid, cid, property);
+        const result = await ctx.scene.call(
+            'serializedComponentValue', target.nodeUuid, cid, property, target.componentUuid);
         if (!result || result.success !== true) {
             problem = `the serialized form was not read (${(result && result.error) || 'no answer'})`;
             continue;
+        }
+        if (!answeredAbout(target, result.data.componentUuid)) {
+            return { problem: `the serialized form was not read (${ANOTHER_COMPONENT})` };
         }
         if (result.data.found && !result.data.unnamedReference) return { value: result.data.value };
         if (result.data.found) {

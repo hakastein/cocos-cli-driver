@@ -6,14 +6,16 @@ import type { Driver, PropertyDump, WriteReport } from '@cocos-cli/shared';
 
 export interface ReferenceOptions {
     targetComponentType?: string;
-    /** Index among the node's components OF THE SAME CLASS — not the `__comps__` index. */
-    sameClassIndex?: number;
 }
 
 export interface WriteTarget {
     nodeUuid: string;
     componentType: string;
     componentIndex: number;
+    /** Index among the node's components OF THE SAME CLASS — not the `__comps__` index; absent is 0. */
+    sameClassIndex?: number;
+    /** The component's own uuid, which names it where a class id names only the first of its class. */
+    componentUuid?: string;
     propertyPath: string;
     descriptor: PropertyDescriptor;
     prefabInstanceRoot?: string;
@@ -695,7 +697,7 @@ async function writeReference(target: WriteTarget, value: unknown, ctx: Driver):
         nodeUuid: target.nodeUuid, componentType: target.componentType, property: target.propertyPath
     };
     if (options.targetComponentType !== undefined) args.targetComponentType = options.targetComponentType;
-    if (options.sameClassIndex !== undefined) args.componentIndex = options.sameClassIndex;
+    if (target.sameClassIndex !== undefined) args.componentIndex = target.sameClassIndex;
     if (value === null || value === undefined) {
         args.clear = true;
     } else if (Array.isArray(value)) {

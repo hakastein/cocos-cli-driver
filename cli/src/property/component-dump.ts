@@ -1,3 +1,4 @@
+import { siblingLabels } from '@cocos-cli/shared';
 import { isDumpDescriptor, resolveKind } from './kind.ts';
 import type { PropertyDescriptor, PropertyKind } from './kind.ts';
 import { projectValue } from './readers.ts';
@@ -16,11 +17,17 @@ export interface ComponentChoice {
     index: number;
     /** The name the class is REGISTERED under — `cc.Camera`, `GameBootstrap` — never the typed spelling. */
     className: string;
+    /** The address the component answers to on its node: `SplineAnimate`, or `SplineAnimate#2`. */
+    label: string;
+    /** Position among the node's components of the same class, 0 for the first. */
+    sameClassIndex: number;
+    uuid: string | null;
     cid: string | null;
     enabled: boolean | null;
-    /** How many components of this class the node carries; the reading answers about the first. */
-    sameClassCount: number;
 }
+
+/** `absent`: the node carries no component of the class at all, as opposed to none at that position. */
+export type ComponentSelection = ComponentChoice | { error: string; absent: boolean };
 
 export interface PropertyReading {
     name: string;
@@ -81,34 +88,79 @@ export function componentClassNames(components: ComponentDump[]): string[] {
     return (components || []).map(classNameOf);
 }
 
+/**
+ * The address of every component on the node, by the rule node paths follow: a class the node holds
+ * once stands bare, and one it holds several times carries its position on every occurrence.
+ */
+export function componentLabels(components: ComponentDump[]): string[] {
+    return siblingLabels(componentClassNames(components).map(name => ({ name })));
+}
+
+/** The component's own uuid, which the dump carries among the fields the editor injects. */
+export function componentUuid(component: ComponentDump): string | null {
+    const descriptor = component.value && component.value.uuid;
+    return isDumpDescriptor(descriptor) && typeof descriptor.value === 'string' && descriptor.value
+        ? descriptor.value
+        : null;
+}
+
 function enabledOf(component: ComponentDump): boolean | null {
     const descriptor = component.value && component.value.enabled;
     if (!isDumpDescriptor(descriptor)) return null;
     return typeof descriptor.value === 'boolean' ? descriptor.value : null;
 }
 
+const ORDINAL = /^(.+)#(\d+)$/;
+
 /**
  * The dump names a component by its REGISTERED class, so an engine component answers to `cc.Camera`
  * and never to `Camera` — the spelling a caller types. Both are tried, the caller's own first, which
  * is what keeps `cc.Sprite` and a user class named `Sprite` distinguishable when a node carries both.
+ *
+ * A bare class name the node holds more than once is refused rather than read as the first: the
+ * address would then be exact for one component and ambiguous for the other, which is how node paths
+ * put a write on the wrong gangster's hat before same-named siblings got their `#N`.
  */
-export function selectComponent(components: ComponentDump[], typed: string): ComponentChoice | null {
+export function selectComponent(components: ComponentDump[], typed: string): ComponentSelection {
     const all = components || [];
-    for (const spelling of spellings(typed)) {
+    const ordinal = ORDINAL.exec(typed);
+    const name = ordinal ? ordinal[1] : typed;
+    const labels = componentLabels(all);
+    const carried = labels.join(', ') || '(none)';
+
+    for (const spelling of spellings(name)) {
         const matches = all
             .map((component, index) => ({ component, index }))
             .filter(entry => classMarkers(entry.component).includes(spelling));
         if (!matches.length) continue;
-        const first = matches[0];
+        if (!ordinal && matches.length > 1) {
+            return {
+                absent: false,
+                error: `'${typed}' matches ${matches.length} components of the node: ${
+                    matches.map(entry => [labels[entry.index], componentUuid(entry.component)]
+                        .filter(Boolean).join(' ')).join(', ')}`
+            };
+        }
+        const sameClassIndex = ordinal ? Number(ordinal[2]) - 1 : 0;
+        const chosen = matches[sameClassIndex];
+        if (!chosen) {
+            return {
+                absent: false,
+                error: `the node carries ${matches.length} ${classNameOf(matches[0].component)}, `
+                    + `so '${typed}' names none of them; it carries: ${carried}`
+            };
+        }
         return {
-            index: first.index,
-            className: classNameOf(first.component),
-            cid: componentCid(first.component),
-            enabled: enabledOf(first.component),
-            sameClassCount: matches.length
+            index: chosen.index,
+            className: classNameOf(chosen.component),
+            label: labels[chosen.index],
+            sameClassIndex,
+            uuid: componentUuid(chosen.component),
+            cid: componentCid(chosen.component),
+            enabled: enabledOf(chosen.component)
         };
     }
-    return null;
+    return { absent: true, error: `the node carries no component '${typed}'; it carries: ${carried}` };
 }
 
 function enumLabel(descriptor: PropertyDescriptor, value: unknown): string | null {

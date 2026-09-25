@@ -1,6 +1,8 @@
 import type { Driver } from '@cocos-cli/shared';
 import { settle } from './settle.ts';
-import { componentClassNames, selectComponent } from './property/component-dump.ts';
+import {
+    componentClassNames, componentLabels, componentUuid
+} from './property/component-dump.ts';
 import type { ComponentDump } from './property/component-dump.ts';
 
 const CC_PREFIX = 'cc.';
@@ -25,58 +27,50 @@ export async function queryComponents(client: Driver, nodeUuid: string): Promise
     return ((node && node.__comps__) as ComponentDump[] | undefined) || [];
 }
 
-async function componentNamesNow(client: Driver, nodeUuid: string): Promise<string[]> {
-    return componentClassNames(await queryComponents(client, nodeUuid));
-}
-
-/**
- * Every type in `after` a running count from `before` cannot account for. A growing multiset rather
- * than a set difference, because a node can already carry several components of the same type — the
- * only way to tell an old instance from the one just added is by count.
- */
-function newlyAppearedTypes(before: string[], after: string[]): string[] {
-    const remaining = new Map<string, number>();
-    for (const type of before) remaining.set(type, (remaining.get(type) || 0) + 1);
-    const appeared: string[] = [];
-    for (const type of after) {
-        const left = remaining.get(type) || 0;
-        if (left > 0) { remaining.set(type, left - 1); continue; }
-        appeared.push(type);
-    }
-    return appeared;
-}
-
 export interface PollOptions {
     timeoutMs?: number;
     intervalMs?: number;
 }
 
 interface Appearance {
-    matched: string | null;
-    appeared: string[];
+    /** The node's components after the add. */
+    after: ComponentDump[];
+    /** Those of them whose uuid the node did not carry before, in component order. */
+    appeared: ComponentDump[];
+    matched: ComponentDump | null;
 }
 
 /**
- * A class declaring a requirement makes the editor attach that requirement AHEAD of it, so the
- * first component to appear is not the one that was asked for. The wait therefore runs until a
- * spelling of the asked-for type appears, and what else the node gained comes back with it.
+ * A new component is told from an old one of the same class by its uuid alone, since a node can
+ * carry several of one class. A class declaring a requirement makes the editor attach that
+ * requirement AHEAD of it, so the first component to appear is not the one that was asked for: the
+ * wait runs until a spelling of the asked-for type appears, and what else the node gained comes
+ * back with it.
  */
 async function pollForNewComponent(
-    client: Driver, nodeUuid: string, before: string[], spellings: string[], pollOptions?: PollOptions
+    client: Driver, nodeUuid: string, before: Set<string | null>, spellings: string[],
+    pollOptions?: PollOptions
 ): Promise<Appearance> {
-    let appeared: string[] = [];
+    let seen: Appearance = { after: [], appeared: [], matched: null };
     await settle(async () => {
-        appeared = newlyAppearedTypes(before, await componentNamesNow(client, nodeUuid));
-        return appeared.some(type => spellings.includes(type));
+        const after = await queryComponents(client, nodeUuid);
+        const appeared = after.filter(component => !before.has(componentUuid(component)));
+        const names = componentClassNames(appeared);
+        const at = names.findIndex(name => spellings.includes(name));
+        seen = { after, appeared, matched: at >= 0 ? appeared[at] : null };
+        return at >= 0;
     }, pollOptions);
-    return { matched: appeared.find(type => spellings.includes(type)) || null, appeared };
+    return seen;
 }
 
-/** An add whose component was read back: `type` is the name it actually registered under. */
+/** An add whose component was read back. */
 export interface ComponentRegistered {
     verified: true;
+    /** The name the class registered under. */
     type: string;
-    alreadyPresent: boolean;
+    /** The address the new component answers to on its node. */
+    label: string;
+    uuid: string | null;
 }
 
 /**
@@ -103,8 +97,16 @@ export function unverifiedAddNote(outcome: ComponentUnverified): string {
  */
 function outcomeOf(spellings: string[], seen: Appearance): ComponentAddOutcome {
     const named = seen.matched || (seen.appeared.length === 1 ? seen.appeared[0] : null);
-    if (named) return { verified: true, type: named, alreadyPresent: false };
-    return { verified: false, spellings, appeared: seen.appeared };
+    if (!named) {
+        return { verified: false, spellings, appeared: componentClassNames(seen.appeared) };
+    }
+    const at = seen.after.indexOf(named);
+    return {
+        verified: true,
+        type: componentClassNames([named])[0],
+        label: componentLabels(seen.after)[at],
+        uuid: componentUuid(named)
+    };
 }
 
 /** Neither add path is trusted on its own word — each spelling is tried, then polled for. Shared by
@@ -113,9 +115,7 @@ export async function addComponent(
     client: Driver, nodeUuid: string, type: string, pollOptions?: PollOptions
 ): Promise<ComponentAddOutcome> {
     const components = await queryComponents(client, nodeUuid);
-    const present = selectComponent(components, type);
-    if (present) return { verified: true, type: present.className, alreadyPresent: true };
-    const before = componentClassNames(components);
+    const before = new Set(components.map(componentUuid));
     const spellings = spellingCandidates(type);
 
     for (const candidate of spellings) {
@@ -131,8 +131,9 @@ export async function addComponent(
         }
     }
 
-    const after = await componentNamesNow(client, nodeUuid);
+    const held = componentClassNames(components).some(name => spellings.includes(name));
+    const after = componentLabels(await queryComponents(client, nodeUuid));
     throw new Error(
-        `component '${type}' did not appear on node ${nodeUuid} after the add; the node carries: ${
-            after.join(', ') || '(none)'}`);
+        `component '${type}' did not appear on node ${nodeUuid} after the add${
+            held ? ', which already carried one' : ''}; the node carries: ${after.join(', ') || '(none)'}`);
 }

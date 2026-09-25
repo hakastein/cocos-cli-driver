@@ -7,8 +7,7 @@ import { verifiedWrite, withSerializerVerdict } from '../property/verified-write
 import { readBack, readBackMismatches, componentPath, writerFor } from '../property/writers.ts';
 import { withUndoBracket } from '../undo-bracket.ts';
 import {
-    componentClassNames, descriptorOf, findProperty, propertyNames, readComponentProperties,
-    selectComponent
+    descriptorOf, findProperty, propertyNames, readComponentProperties, selectComponent
 } from '../property/component-dump.ts';
 import { buildReferenceIndex, referencedUuids } from '../property/reference-index.ts';
 import { isReferenceKind, referenceRequest, spellingText } from '../property/reference-target.ts';
@@ -55,11 +54,38 @@ interface ComponentMatch extends ComponentChoice {
 async function findComponent(client: Driver, nodeUuid: string, type: string): Promise<ComponentMatch> {
     const components = await queryComponents(client, nodeUuid);
     const choice = selectComponent(components, type);
-    if (!choice) {
-        throw new Error(`the node carries no component '${type}'; it carries: ${
-            componentClassNames(components).join(', ') || '(none)'}`);
-    }
+    if ('error' in choice) throw new Error(choice.error);
     return { ...choice, dump: components[choice.index] };
+}
+
+function writeTarget(
+    nodeUuid: string, component: ComponentMatch, property: string, descriptor: PropertyDescriptor
+): WriteTarget {
+    return {
+        nodeUuid,
+        componentType: component.className,
+        componentIndex: component.index,
+        sameClassIndex: component.sameClassIndex,
+        ...(component.uuid ? { componentUuid: component.uuid } : {}),
+        propertyPath: property,
+        descriptor
+    };
+}
+
+/**
+ * The scene script turns a node into the first of its components the field takes and says nothing
+ * when the node carries several. So the component is picked here, by the rule a component argument
+ * follows: a class the node holds more than once is refused, naming each one's uuid, and `Class#N`
+ * picks one. A node carrying no component of that exact class is left to the scene script, which
+ * also answers for a subclass.
+ */
+async function componentOnTarget(client: Driver, target: string, className: string): Promise<string> {
+    const components = await queryComponents(client, target).catch(() => null);
+    if (!components) return target;
+    const choice = selectComponent(components, className);
+    if (!('error' in choice)) return choice.uuid || target;
+    if (choice.absent) return target;
+    throw new Error(choice.error);
 }
 
 /**
@@ -88,19 +114,22 @@ async function targetUuid(
 }
 
 async function resolveReferenceValue(
-    client: Driver, kind: PropertyKind, value: unknown
+    client: Driver, kind: PropertyKind, value: unknown, componentClass?: string
 ): Promise<unknown> {
     const request = referenceRequest(value);
     if ('error' in request) throw new Error(request.error);
     const uuids: string[] = [];
-    for (const target of request.targets) uuids.push(await targetUuid(client, kind, target));
+    for (const target of request.targets) {
+        const uuid = await targetUuid(client, kind, target);
+        if (!componentClass) { uuids.push(uuid); continue; }
+        try {
+            uuids.push(await componentOnTarget(client, uuid, componentClass));
+        } catch (error) {
+            throw new Error(`'${spellingText(target)}': ${(error as Error).message}`);
+        }
+    }
     if (!uuids.length) return request.array ? [] : null;
     return request.array ? uuids : uuids[0];
-}
-
-interface ResolvedValue {
-    value: unknown;
-    warnings: string[];
 }
 
 /**
@@ -112,9 +141,9 @@ interface ResolvedValue {
  */
 async function resolveNestedReferences(
     client: Driver, descriptor: PropertyDescriptor, value: unknown, targetComponent?: string
-): Promise<ResolvedValue> {
+): Promise<unknown> {
     const sites = nestedReferenceSites(descriptor, value);
-    if (!sites.length) return { value, warnings: [] };
+    if (!sites.length) return value;
 
     const listed = new Map<string, ComponentOwner[]>();
     const ownersOf = async (className: string): Promise<ComponentOwner[]> => {
@@ -126,7 +155,6 @@ async function resolveNestedReferences(
         return answer.owners;
     };
 
-    const warnings: string[] = [];
     const resolved: ResolvedSite[] = [];
     for (const site of sites) {
         const request = referenceRequest(site.spelling);
@@ -139,8 +167,8 @@ async function resolveNestedReferences(
             const owners = await ownersOf(className);
             const onNode = owners.filter(owner => owner.nodeUuid === uuid);
             if (onNode.length > 1) {
-                warnings.push(`${onNode[0].nodePath} carries ${onNode.length} components of `
-                    + `${className}, and '${siteLabel(site)}' took the first`);
+                throw new Error(`'${siteLabel(site)}': ${onNode[0].nodePath} carries ${onNode.length} `
+                    + `components of ${className}: ${onNode.map(owner => owner.componentUuid).join(', ')}`);
             }
             if (onNode.length) { uuids.push(onNode[0].componentUuid); continue; }
             if (owners.some(owner => owner.componentUuid === uuid)) { uuids.push(uuid); continue; }
@@ -153,7 +181,7 @@ async function resolveNestedReferences(
             uuid: request.array ? uuids : (uuids.length ? uuids[0] : null)
         });
     }
-    return { value: withReferenceUuids(value, resolved), warnings };
+    return withReferenceUuids(value, resolved);
 }
 
 /**
@@ -176,31 +204,28 @@ export async function componentSet(client: Driver, spec: SetSpec): Promise<Repor
     }
     const kind = resolveKind(descriptor);
     const target: WriteTarget = {
-        nodeUuid,
-        componentType: component.className,
-        componentIndex: component.index,
-        propertyPath: spec.property,
-        descriptor,
+        ...writeTarget(nodeUuid, component, spec.property, descriptor),
         ...(spec.targetComponent ? { refOptions: { targetComponentType: spec.targetComponent } } : {})
     };
+    const componentClass = spec.targetComponent
+        || (kind === 'componentRef' && typeof descriptor.type === 'string' ? descriptor.type : undefined);
 
-    const resolved: ResolvedValue = isReferenceKind(kind)
-        ? { value: await resolveReferenceValue(client, kind, spec.value), warnings: [] }
+    const resolved = isReferenceKind(kind)
+        ? await resolveReferenceValue(client, kind, spec.value, componentClass)
         : await resolveNestedReferences(client, descriptor, spec.value, spec.targetComponent);
-    if (!writerFor(target, resolved.value)) {
+    if (!writerFor(target, resolved)) {
         throw new Error(`nothing can write property '${spec.property}' of kind '${kind}'`);
     }
 
-    const written = await verifiedWrite(target, resolved.value, client, verificationFor(kind));
+    const written = await verifiedWrite(target, resolved, client, verificationFor(kind));
     return {
         kind: 'write',
-        target: component.className,
+        target: component.label,
         writes: [{
-            target: component.className, property: spec.property, value: spec.value,
+            target: component.label, property: spec.property, value: spec.value,
             report: written.report
         }],
-        undoNote: written.undoNote,
-        ...(resolved.warnings.length ? { warnings: resolved.warnings } : {})
+        undoNote: written.undoNote
     };
 }
 
@@ -246,11 +271,6 @@ export async function componentGet(client: Driver, spec: GetSpec): Promise<Repor
     const component = await findComponent(client, nodeUuid, spec.component);
     const address: ComponentAddress = { nodePath: spec.node, nodeUuid, choice: component };
 
-    const warnings = component.sameClassCount > 1
-        ? [`the node carries ${component.sameClassCount} components of ${component.className}, `
-            + 'and the first was read']
-        : undefined;
-
     if (spec.property) {
         const reading = findProperty(component.dump, spec.property);
         if (!reading) {
@@ -258,14 +278,12 @@ export async function componentGet(client: Driver, spec: GetSpec): Promise<Repor
                 propertyNames(component.dump).join(', ') || '(none)'}`);
         }
         const { index, unread } = await resolveReferences(client, [reading]);
-        return { kind: 'componentProperty', address, reading, references: index, unread, warnings };
+        return { kind: 'componentProperty', address, reading, references: index, unread };
     }
 
     const { readings, hidden } = readComponentProperties(component.dump);
     const { index, unread } = await resolveReferences(client, readings);
-    return {
-        kind: 'componentProperties', address, readings, hidden, references: index, unread, warnings
-    };
+    return { kind: 'componentProperties', address, readings, hidden, references: index, unread };
 }
 
 export interface AddSpec {
@@ -288,9 +306,7 @@ export async function componentAdd(client: Driver, spec: AddSpec): Promise<Repor
     return {
         kind: 'action',
         verdict: 'ok',
-        summary: outcome.alreadyPresent
-            ? `${outcome.type} already on ${spec.node}`
-            : `${outcome.type} added to ${spec.node}`
+        summary: `${outcome.label} added to ${spec.node}${outcome.uuid ? `  ${outcome.uuid}` : ''}`
     };
 }
 
@@ -299,30 +315,17 @@ export async function componentRemove(
 ): Promise<Report> {
     const uuid = await resolveNode(client, spec.node);
     const component = await findComponent(client, uuid, spec.component);
-    await client.editor.scene.removeComponent({
-        uuid: await componentUuid(client, uuid, component.className)
-    });
+    await client.editor.scene.removeComponent({ uuid: uuidOf(component) });
     return {
         kind: 'action', verdict: 'ok',
-        summary: `${component.className} removed from ${spec.node}`
+        summary: `${component.label} removed from ${spec.node}`
     };
 }
 
-/**
- * `remove-component` and `reset-component` both take the component's OWN uuid, which the node dump
- * does not carry — only the class-owner listing does.
- */
-async function componentUuid(
-    client: Driver, nodeUuid: string, className: string
-): Promise<string> {
-    const owners = await unwrap(
-        client.scene.call('findComponentOwners', { className }), 'findComponentOwners');
-    const owner = owners.owners.find(entry => entry.nodeUuid === nodeUuid);
-    if (!owner) {
-        throw new Error(`component '${className}' is visible on the node, but its uuid is not `
-            + 'among the owners of the class');
-    }
-    return owner.componentUuid;
+/** `remove-component` and `reset-component` both take the component's OWN uuid. */
+function uuidOf(component: ComponentMatch): string {
+    if (!component.uuid) throw new Error(`the node dump names no uuid for ${component.label}`);
+    return component.uuid;
 }
 
 function changedProperties(before: PropertyReading[], after: PropertyReading[]): PropertyReading[] {
@@ -343,7 +346,7 @@ export async function componentReset(
 ): Promise<Report> {
     const nodeUuid = await resolveNode(client, spec.node);
     const component = await findComponent(client, nodeUuid, spec.component);
-    const uuid = await componentUuid(client, nodeUuid, component.className);
+    const uuid = uuidOf(component);
     const before = readComponentProperties(component.dump).readings;
 
     const { undoNote } = await withUndoBracket(client, nodeUuid,
@@ -359,20 +362,17 @@ export async function componentReset(
             written: true, verified: true, persisted: null, channel: 'editor'
         };
         writes.push({
-            target: component.className,
+            target: component.label,
             property: reading.name,
             value: reading.value,
-            report: descriptor === null ? report : await withSerializerVerdict(report, {
-                nodeUuid,
-                componentType: component.className,
-                componentIndex: component.index,
-                propertyPath: reading.name,
-                descriptor
-            }, client)
+            report: descriptor === null
+                ? report
+                : await withSerializerVerdict(
+                    report, writeTarget(nodeUuid, reset, reading.name, descriptor), client)
         });
     }
 
-    return { kind: 'write', target: component.className, writes, undoNote };
+    return { kind: 'write', target: component.label, writes, undoNote };
 }
 
 export interface ArraySpec {
@@ -400,22 +400,16 @@ async function arrayEdit(client: Driver, spec: ArraySpec): Promise<ArrayEdit> {
         throw new Error(`component '${component.className}' has no property '${spec.property}'; it has: ${
             propertyNames(component.dump).join(', ') || '(the live dump is unavailable)'}`);
     }
-    const target: WriteTarget = {
-        nodeUuid,
-        componentType: component.className,
-        componentIndex: component.index,
-        propertyPath: spec.property,
-        descriptor
-    };
+    const target = writeTarget(nodeUuid, component, spec.property, descriptor);
     const elements = await readBack(target, client);
     if (!Array.isArray(elements)) {
-        throw new Error(`'${component.className}.${spec.property}' is not an array`);
+        throw new Error(`'${component.label}.${spec.property}' is not an array`);
     }
     if (!Number.isInteger(spec.index) || spec.index < 0 || spec.index >= elements.length) {
-        throw new Error(`--index ${spec.index} is outside '${component.className}.${spec.property}', `
+        throw new Error(`--index ${spec.index} is outside '${component.label}.${spec.property}', `
             + `which holds ${elements.length} element(s)`);
     }
-    return { target, className: component.className, elements };
+    return { target, className: component.label, elements };
 }
 
 /**

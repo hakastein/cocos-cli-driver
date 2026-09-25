@@ -17,11 +17,12 @@ const tried = (driver) => driver.calls
     .filter(call => call.name === 'scene.createComponent')
     .map(call => call.args[0].component);
 
-test('a component that appeared through the editor message is not alreadyPresent', async () => {
+test('an added component is reported with the uuid the node dump gives it', async () => {
     const driver = scene([]);
     const outcome = await addComponent(driver, driver.uuidOf('Hero'), 'Sprite', FAST);
     assert.equal(outcome.type, 'Sprite');
-    assert.equal(outcome.alreadyPresent, false);
+    assert.equal(outcome.label, 'Sprite');
+    assert.equal(outcome.uuid, driver.componentsOf(driver.uuidOf('Hero'))[0].uuid);
 });
 
 test('the report names the registered class name rather than the spelling from the request', async () => {
@@ -44,20 +45,28 @@ test('a component that appeared under no spelling is refused rather than passed 
         error => /Nope/.test(error.message) && /Sprite/.test(error.message));
 });
 
-test('already on the node — not added twice, and the report names what is already there', async () => {
-    const driver = scene(['cc.Sprite']);
-    const outcome = await addComponent(driver, driver.uuidOf('Hero'), 'cc.Sprite', FAST);
-    assert.equal(outcome.alreadyPresent, true);
-    assert.equal(outcome.type, 'cc.Sprite');
-    assert.deepEqual(tried(driver), []);
+// Checked live 2026-09-25: `create-component` on a node already carrying `SplineAnimate` attached
+// a second one.
+test('a class already on the node gets one more, told from the first by its uuid', async () => {
+    const driver = scene(['SplineAnimate']);
+    const hero = driver.uuidOf('Hero');
+    const outcome = await addComponent(driver, hero, 'SplineAnimate', FAST);
+    const [first, second] = driver.componentsOf(hero);
+    assert.equal(outcome.label, 'SplineAnimate#2');
+    assert.equal(outcome.uuid, second.uuid);
+    assert.notEqual(outcome.uuid, first.uuid);
 });
 
-test('already on the node is recognized by the bare spelling too, not only by the registered one', async () => {
-    const driver = scene(['cc.Sprite']);
-    const outcome = await addComponent(driver, driver.uuidOf('Hero'), 'Sprite', FAST);
-    assert.equal(outcome.alreadyPresent, true);
-    assert.equal(outcome.type, 'cc.Sprite');
-    assert.deepEqual(tried(driver), []);
+test('a class the engine allows once per node is refused, saying the node already carried one', async () => {
+    const driver = new MemoryDriver({
+        nodes: [{ name: 'Hero', components: [{ type: 'cc.UITransform' }] }],
+        classes: ['cc.UITransform'],
+        disallowMultiple: ['cc.UITransform']
+    });
+    await assert.rejects(
+        () => addComponent(driver, driver.uuidOf('Hero'), 'cc.UITransform', FAST),
+        /did not appear .*, which already carried one; the node carries: cc\.UITransform$/);
+    assert.equal(driver.componentsOf(driver.uuidOf('Hero')).length, 1);
 });
 
 // A class that declares a requirement makes the editor attach that requirement AHEAD of it, so the

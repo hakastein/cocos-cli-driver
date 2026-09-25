@@ -42,6 +42,14 @@ export function findNodeByUuidOrNull(scene: any, nodeUuid: string): any {
     }
 }
 
+/** A class id names only the first of several components of one class on a node; a uuid names each. */
+export function componentOnNode(node: any, cid: string, componentUuid?: string): any {
+    const cc = require('cc');
+    return (node.components || []).find((component: any) => component && (componentUuid
+        ? component.uuid === componentUuid
+        : (cc.js as any)._getClassId(component.constructor) === cid));
+}
+
 export function findComponentByUuid(scene: any, uuid: string): any {
     const stack: any[] = [...(scene.children || [])];
     while (stack.length) {

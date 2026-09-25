@@ -298,6 +298,21 @@ test('a component uuid in a nested slot is taken as it stands', async () => {
         { type: 'SoundEmitter', value: { uuid: emitter.uuid } });
 });
 
+test('a node carrying two components of the nested slot class is refused BEFORE the write', async () => {
+    const scene = tradeScene();
+    scene.nodes[1].children[0].components.push({ type: 'SoundEmitter' });
+    const driver = new MemoryDriver(scene);
+    const [first, second] = driver.componentsOf(driver.uuidOf('Audio/SfxSale'));
+    await assert.rejects(
+        () => componentSet(driver, {
+            node: 'Counter/Sale', component: 'Trade', property: 'saleCue',
+            value: { sound: 'Audio/SfxSale' }
+        }),
+        { message: `'sound': Audio/SfxSale carries 2 components of SoundEmitter: `
+            + `${first.uuid}, ${second.uuid}` });
+    assert.ok(!driver.calls.some(call => call.name === 'scene.setProperty'));
+});
+
 test('a node carrying no such component is refused BEFORE the write', async () => {
     const driver = new MemoryDriver(tradeScene());
     await assert.rejects(
@@ -321,8 +336,8 @@ test('add names the class the engine registered, not the spelling that was typed
     const output = present(await componentAdd(driver, {
         node: 'Guard', component: 'Camera', poll: FAST
     }));
-    assert.equal(output.stdout, 'cc.Camera added to Guard');
-    assert.ok(driver.componentsOf(driver.uuidOf('Guard')).some(one => one.type === 'cc.Camera'));
+    const camera = driver.componentsOf(driver.uuidOf('Guard')).find(one => one.type === 'cc.Camera');
+    assert.equal(output.stdout, `cc.Camera added to Guard  ${camera.uuid}`);
 });
 
 // The editor attaches a declared requirement ahead of the class asked for, so the dependency is
@@ -336,7 +351,7 @@ test('add names the class asked for, not the dependency attached ahead of it', a
     const output = present(await componentAdd(driver, {
         node: 'Guard', component: 'cc.Sprite', poll: FAST
     }));
-    assert.equal(output.stdout, 'cc.Sprite added to Guard');
+    assert.match(output.stdout, /^cc\.Sprite added to Guard {2}/);
 });
 
 test('an add no spelling of which names what appeared is UNVERIFIED, naming what did', async () => {
@@ -351,13 +366,14 @@ test('an add no spelling of which names what appeared is UNVERIFIED, naming what
     assert.equal(output.exitCode, 3);
 });
 
-test('a class already on the node is said to be already there rather than added twice', async () => {
+test('a class already on the node is added again, under the address of the new one', async () => {
     const driver = withGuard();
     const output = present(await componentAdd(driver, {
         node: 'Guard', component: 'cc.Sprite', poll: FAST
     }));
-    assert.match(output.stdout, /already on Guard/);
-    assert.equal(driver.componentsOf(driver.uuidOf('Guard')).length, 1);
+    const sprites = driver.componentsOf(driver.uuidOf('Guard'));
+    assert.equal(sprites.length, 2);
+    assert.equal(output.stdout, `cc.Sprite#2 added to Guard  ${sprites[1].uuid}`);
 });
 
 test('a class the engine never registered is refused rather than reported as added', async () => {
@@ -366,9 +382,9 @@ test('a class the engine never registered is refused rather than reported as add
         () => componentAdd(driver, { node: 'Guard', component: 'Nope', poll: FAST }), /Nope/);
 });
 
-// `remove-component` takes the component's own uuid, which the node dump does not carry — only the
-// class-owner listing does, and a removal aimed at the node uuid would take the wrong thing.
-test('rm reaches the editor with the component uuid the owner listing named', async () => {
+// `remove-component` takes the component's own uuid; a removal aimed at the node uuid would take the
+// wrong thing.
+test('rm reaches the editor with the component uuid the node dump names', async () => {
     const driver = withGuard();
     const nodeUuid = driver.uuidOf('Guard');
     const componentUuid = driver.componentsOf(nodeUuid)[0].uuid;
@@ -401,21 +417,147 @@ test('--prop prints the value under the address and the type it is declared with
     assert.equal(output.stdout, 'cc.Sprite.color  cc.Color\n#ffffffff');
 });
 
-// Which of the two was read is the caller's next question, and neither the value nor the listing
-// answers it.
-test('a node carrying two components of the class warns that the first was read', async () => {
+// ----- Several components of one class ----------------------------------------------------
+
+const speed = (value) => ({ name: 'speed', type: 'Number', value, default: 1 });
+
+const dropship = (extra = {}) => ({
+    nodes: [{ name: 'Dropship', components: [
+        { type: 'SplineAnimate', props: { speed: speed(2) } },
+        { type: 'EntityRoot' },
+        { type: 'SplineAnimate', props: { speed: speed(5) } }
+    ] }],
+    ...extra
+});
+
+const splines = (driver) =>
+    driver.componentsOf(driver.uuidOf('Dropship')).filter(one => one.type === 'SplineAnimate');
+
+test('a bare class the node carries twice is refused by every subcommand, naming both', async () => {
+    const driver = new MemoryDriver(dropship());
+    const [arrive, leave] = splines(driver);
+    const refusal = `'SplineAnimate' matches 2 components of the node: SplineAnimate#1 ${arrive.uuid}, `
+        + `SplineAnimate#2 ${leave.uuid}`;
+    const bare = { node: 'Dropship', component: 'SplineAnimate' };
+    await assert.rejects(() => componentGet(driver, bare), { message: refusal });
+    await assert.rejects(() => componentSet(driver, { ...bare, property: 'speed', value: 9 }),
+        { message: refusal });
+    await assert.rejects(() => componentRemove(driver, bare), { message: refusal });
+    await assert.rejects(() => componentReset(driver, bare), { message: refusal });
+    assert.deepEqual(splines(driver).map(one => one.props.speed.value), [2, 5]);
+});
+
+test('get names the component by its address and prints its uuid', async () => {
+    const driver = new MemoryDriver(dropship());
+    const output = present(await componentGet(driver, { node: 'Dropship', component: 'SplineAnimate#2' }));
+    assert.equal(output.stdout.split('\n')[0],
+        `SplineAnimate#2 on Dropship  ${splines(driver)[1].uuid}  enabled=unknown  hidden: 1  `
+            + '* — differs from the default');
+    assert.match(output.stdout, /speed +Number +\* +5/);
+});
+
+test('set on #2 writes the second component and leaves the first alone', async () => {
+    const driver = new MemoryDriver(dropship());
+    const output = await setOutput(driver,
+        { node: 'Dropship', component: 'SplineAnimate#2', property: 'speed', value: 9 });
+    assert.deepEqual(splines(driver).map(one => one.props.speed.value), [2, 9]);
+    assert.match(output.stdout, /^SplineAnimate#2\.speed = 9 .*persisted=true/);
+    assert.equal(output.exitCode, 0);
+});
+
+// The serializer is asked about a component by class id, which names only the first of its class;
+// compared against the first's value, a write to the second would read as one a save drops.
+test('the save verdict for #2 is taken from the second component, not from the first', async () => {
     const driver = new MemoryDriver({
-        nodes: [{ name: 'Canvas', children: [{ name: 'Bg', components: [
-            { type: 'cc.Sprite', props: { color: white() } },
-            { type: 'cc.Sprite', props: { color: white() } }
-        ] }] }]
+        nodes: [{ name: 'Dropship', components: [
+            { type: 'SplineAnimate', props: { speed: speed(2) }, serialized: { speed: 2 } },
+            { type: 'SplineAnimate', props: { speed: speed(5) }, serialized: { speed: 9 } }
+        ] }]
     });
-    for (const property of [undefined, 'color']) {
-        const output = present(await componentGet(
-            driver, { node: 'Canvas/Bg', component: 'Sprite', property }));
-        assert.deepEqual(output.warnings,
-            ['the node carries 2 components of cc.Sprite, and the first was read']);
-    }
+    const output = await setOutput(driver,
+        { node: 'Dropship', component: 'SplineAnimate#2', property: 'speed', value: 9 });
+    assert.match(output.stdout, /persisted=true/);
+});
+
+test('a scene script that answers about the first of the class leaves the verdict on #2 open', async () => {
+    const driver = new MemoryDriver(dropship({ staleSceneScript: true }));
+    const output = await setOutput(driver,
+        { node: 'Dropship', component: 'SplineAnimate#2', property: 'speed', value: 9 });
+    assert.equal(output.stderr.split('  ')[0], 'UNVERIFIED');
+    assert.match(output.stderr, /answered about another component of the class/);
+    assert.equal(output.exitCode, 3);
+});
+
+test('rm on #1 removes the first and leaves the second', async () => {
+    const driver = new MemoryDriver(dropship());
+    const [, leave] = splines(driver);
+    const output = present(await componentRemove(driver, { node: 'Dropship', component: 'SplineAnimate#1' }));
+    assert.equal(output.stdout, 'SplineAnimate#1 removed from Dropship');
+    assert.deepEqual(splines(driver).map(one => one.uuid), [leave.uuid]);
+});
+
+test('reset on #2 resets the second and reports it by its address', async () => {
+    const driver = new MemoryDriver(dropship());
+    const output = present(await componentReset(driver, { node: 'Dropship', component: 'SplineAnimate#2' }));
+    assert.deepEqual(splines(driver).map(one => one.props.speed.value), [2, 1]);
+    assert.match(output.stdout, /^SplineAnimate#2\.speed = 1/);
+});
+
+const departure = () => ({
+    name: 'departure', value: { uuid: '' }, default: null, type: 'SplineAnimate', visible: true,
+    extends: ['cc.Component', 'cc.Object']
+});
+
+const flight = (extra) => new MemoryDriver(dropship({
+    nodes: [...dropship().nodes, { name: 'Game', components: [{ type: 'ActionFlow', props: { departure: departure() } }] }],
+    ...extra
+}));
+
+const departureOf = (driver) => driver.componentsOf(driver.uuidOf('Game'))[0].props.departure.value.uuid;
+
+test('a reference to a node carrying two components of the declared class is refused before the write', async () => {
+    const driver = flight();
+    const [arrive, leave] = splines(driver);
+    await assert.rejects(
+        () => componentSet(driver,
+            { node: 'Game', component: 'ActionFlow', property: 'departure', value: 'Dropship' }),
+        { message: `'Dropship': 'SplineAnimate' matches 2 components of the node: `
+            + `SplineAnimate#1 ${arrive.uuid}, SplineAnimate#2 ${leave.uuid}` });
+    assert.ok(!driver.calls.some(call => call.name === 'scene.setProperty'));
+});
+
+test('the uuid of the second component is written as it stands', async () => {
+    const driver = flight();
+    const leave = splines(driver)[1];
+    const output = await setOutput(driver,
+        { node: 'Game', component: 'ActionFlow', property: 'departure', value: leave.uuid });
+    assert.equal(departureOf(driver), leave.uuid);
+    assert.equal(output.exitCode, 0);
+});
+
+test('a reference written on #2 lands in the second component, not the first', async () => {
+    const driver = new MemoryDriver({
+        nodes: [
+            { name: 'Dropship', components: [
+                { type: 'SplineAnimate', props: { container: emptyRef() } },
+                { type: 'SplineAnimate', props: { container: emptyRef() } }
+            ] },
+            { name: 'Path' }
+        ]
+    });
+    await componentSet(driver,
+        { node: 'Dropship', component: 'SplineAnimate#2', property: 'container', value: 'Path' });
+    assert.deepEqual(splines(driver).map(one => one.props.container.value.uuid), ['', driver.uuidOf('Path')]);
+});
+
+test('--target-component with #N picks that component of the target node', async () => {
+    const driver = flight();
+    const leave = splines(driver)[1];
+    await componentSet(driver, {
+        node: 'Game', component: 'ActionFlow', property: 'departure', value: 'Dropship',
+        targetComponent: 'SplineAnimate#2'
+    });
+    assert.equal(departureOf(driver), leave.uuid);
 });
 
 test('a property the component does not declare is refused, naming the ones it has', async () => {

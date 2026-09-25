@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderNodeTransforms } from '../src/render/node.ts';
+import { nodeHead, renderNodeTransforms } from '../src/render/node.ts';
 
 const transform = (position, rotation, scale = { x: 1, y: 1, z: 1 }) => ({ position, rotation, scale });
 
@@ -19,4 +19,17 @@ test('the float noise of a composed value is dropped, an authored fraction is ke
         'local  position 1.23456,0.5,-3  rotation 0,12.345678,0  scale 1,1,1',
         'world  position 10.5,0,0  rotation 90,0,0  scale 1,1,1'
     ]);
+});
+
+test('a class the node carries twice is printed by the address each component answers to', () => {
+    const still = transform({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 });
+    const head = nodeHead({
+        ...info(still, still),
+        components: [
+            { className: 'SplineAnimate', enabled: true },
+            { className: 'EntityRoot', enabled: true },
+            { className: 'SplineAnimate', enabled: false }
+        ]
+    });
+    assert.equal(head, 'Shot  [SplineAnimate#1,EntityRoot,SplineAnimate#2(off)]  u-1');
 });

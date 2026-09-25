@@ -85,12 +85,11 @@ export type Report =
     | { kind: 'sceneMissing'; missing: MissingScriptDump }
     | {
         kind: 'componentProperty'; address: ComponentAddress; reading: PropertyReading;
-        references: Map<string, ReferenceLabel>; unread?: string; warnings?: string[];
+        references: Map<string, ReferenceLabel>; unread?: string;
     }
     | {
         kind: 'componentProperties'; address: ComponentAddress; readings: PropertyReading[];
         hidden: string[]; references: Map<string, ReferenceLabel>; unread?: string;
-        warnings?: string[];
     }
     | { kind: 'prefabDump'; dump: PrefabAssetDump }
     | { kind: 'prefabOverrides'; overrides: PrefabOverrideReport }
@@ -208,15 +207,14 @@ function render(report: Report): Rendered {
             return {
                 verdict: readingVerdict(report.unread),
                 head: joined([
-                    `${address.choice.className}.${reading.name}  ${reading.type || 'type not declared'}`,
+                    `${address.choice.label}.${reading.name}  ${reading.type || 'type not declared'}`,
                     reading.differsFromDefault === true && 'differs from the default',
                     reading.hiddenInInspector && 'hidden in the inspector'
                 ]),
                 text: joined([
                     formatReading(reading, uuid => references.get(uuid)),
                     report.unread
-                ], '\n'),
-                warnings: report.warnings
+                ], '\n')
             };
         }
 
@@ -225,8 +223,9 @@ function render(report: Report): Rendered {
             return {
                 verdict: readingVerdict(report.unread),
                 head: joined([
-                    `${address.choice.className} on ${address.nodePath}  enabled=${
-                        address.choice.enabled === null ? 'unknown' : address.choice.enabled}`,
+                    `${address.choice.label} on ${address.nodePath}`,
+                    address.choice.uuid || undefined,
+                    `enabled=${address.choice.enabled === null ? 'unknown' : address.choice.enabled}`,
                     hidden.length > 0 && `hidden: ${hidden.length}`,
                     readings.some(reading => reading.differsFromDefault === true)
                         && '* — differs from the default'
@@ -234,8 +233,7 @@ function render(report: Report): Rendered {
                 text: joined([
                     renderComponentReading(readings, uuid => references.get(uuid)),
                     report.unread
-                ], '\n'),
-                warnings: report.warnings
+                ], '\n')
             };
         }
 

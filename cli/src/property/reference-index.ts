@@ -1,3 +1,4 @@
+import { siblingLabels } from '@cocos-cli/shared';
 import type { SceneNodeEntry } from '@cocos-cli/shared';
 import type { PropertyKind } from './kind.ts';
 import type { PropertyReading } from './component-dump.ts';
@@ -6,7 +7,8 @@ export interface ReferenceLabel {
     kind: 'node' | 'component' | 'asset';
     /** A scene path for a node or a component, a `db://` url for an asset. */
     path: string;
-    className?: string;
+    /** What a component answers to on its node: its class, carrying `#N` when the node holds several. */
+    component?: string;
 }
 
 export type ReferenceLookup = (uuid: string) => ReferenceLabel | undefined;
@@ -24,14 +26,12 @@ export function buildReferenceIndex(nodes: SceneNodeEntry[]): Map<string, Refere
         if (!node || typeof node.uuid !== 'string') continue;
         const path = node.path || node.name || node.uuid;
         index.set(node.uuid, { kind: 'node', path });
-        for (const component of node.components || []) {
-            if (!component || typeof component.uuid !== 'string') continue;
-            index.set(component.uuid, {
-                kind: 'component',
-                path,
-                className: component.className
-            });
-        }
+        const components = (node.components || []).filter(Boolean);
+        const labels = siblingLabels(components.map(component => ({ name: component.className })));
+        components.forEach((component, at) => {
+            if (typeof component.uuid !== 'string') return;
+            index.set(component.uuid, { kind: 'component', path, component: labels[at] });
+        });
     }
     return index;
 }

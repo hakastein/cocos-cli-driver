@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    componentCid, componentClassNames, descriptorOf, findProperty, propertyNames,
+    componentCid, descriptorOf, findProperty, propertyNames,
     readComponentProperties, selectComponent
 } from '../src/property/component-dump.ts';
 
@@ -61,10 +61,43 @@ test('an exact spelling beats the prefixed one: cc.Sprite and a local Sprite sta
     assert.equal(selectComponent(comps, 'cc.Sprite').index, 0);
 });
 
-test('several components of one class: the first is read and the counter names the rest', () => {
-    const choice = selectComponent([bootstrap(), camera(), bootstrap()], 'GameBootstrap');
-    assert.equal(choice.index, 0);
-    assert.equal(choice.sameClassCount, 2);
+const spline = (uuid) => ({
+    type: 'SplineAnimate', value: { uuid: { value: uuid, type: 'String', visible: false } }
+});
+
+// A bare name that is exact for one component and ambiguous for the other is how node paths put a
+// write on the wrong node before same-named siblings were numbered.
+test('a bare class the node carries twice is refused, naming each by position and uuid', () => {
+    const choice = selectComponent([spline('u-arrive'), camera(), spline('u-leave')], 'SplineAnimate');
+    assert.equal(choice.error,
+        "'SplineAnimate' matches 2 components of the node: SplineAnimate#1 u-arrive, SplineAnimate#2 u-leave");
+    assert.equal(choice.absent, false);
+});
+
+test('#N picks the Nth component of the class in component order, and carries its own uuid', () => {
+    const choice = selectComponent([spline('u-arrive'), camera(), spline('u-leave')], 'SplineAnimate#2');
+    assert.equal(choice.index, 2);
+    assert.equal(choice.sameClassIndex, 1);
+    assert.equal(choice.label, 'SplineAnimate#2');
+    assert.equal(choice.uuid, 'u-leave');
+});
+
+test('#N takes the prefixed spelling too', () => {
+    const comps = [{ type: 'cc.Sprite', value: {} }, { type: 'cc.Sprite', value: {} }];
+    assert.equal(selectComponent(comps, 'Sprite#2').index, 1);
+});
+
+test('a class the node carries once answers to its bare name and to #1', () => {
+    const comps = [camera(), spline('u-arrive')];
+    assert.equal(selectComponent(comps, 'SplineAnimate').label, 'SplineAnimate');
+    assert.equal(selectComponent(comps, 'SplineAnimate#1').uuid, 'u-arrive');
+});
+
+test('a position past the last component of the class is refused, naming what the node carries', () => {
+    const choice = selectComponent([spline('u-arrive'), spline('u-leave')], 'SplineAnimate#3');
+    assert.equal(choice.error, "the node carries 2 SplineAnimate, so 'SplineAnimate#3' names none of "
+        + 'them; it carries: SplineAnimate#1, SplineAnimate#2');
+    assert.equal(choice.absent, false);
 });
 
 test('a class the dump names only through __type__ answers both spellings', () => {
@@ -87,10 +120,11 @@ test('a write looks the descriptor up by exactly the name given: the same path i
     assert.equal(findProperty(camera(), 'color').name, '_color');
 });
 
-test('the class is absent from the node — no choice, and the name list for the refusal is gathered', () => {
-    const comps = [camera(), bootstrap()];
-    assert.equal(selectComponent(comps, 'cc.MeshRenderer'), null);
-    assert.deepEqual(componentClassNames(comps), ['cc.Camera', 'GameBootstrap']);
+test('the class is absent from the node — refused, naming what the node carries', () => {
+    const choice = selectComponent([camera(), bootstrap()], 'cc.MeshRenderer');
+    assert.equal(choice.error,
+        "the node carries no component 'cc.MeshRenderer'; it carries: cc.Camera, GameBootstrap");
+    assert.equal(choice.absent, true);
 });
 
 test('the editor internal fields stay out of the list and are named among the hidden ones', () => {

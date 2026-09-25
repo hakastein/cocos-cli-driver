@@ -27,6 +27,11 @@ test('the registered class name goes in brackets, comma-separated', () => {
     assert.match(renderTree(scene), /Canvas {2}\[UITransform,Canvas\]/);
 });
 
+test('a class the node carries twice is printed by the address each component answers to', () => {
+    const text = renderTree([node('u_ship', 'Dropship', 'u_root', ['SplineAnimate', 'EntityRoot', 'SplineAnimate'])]);
+    assert.equal(text, 'Dropship  [SplineAnimate#1,EntityRoot,SplineAnimate#2]');
+});
+
 test('an inactive node is marked and an active one is not', () => {
     const text = renderTree(scene);
     assert.match(text, /Btn.*\(off\)/);

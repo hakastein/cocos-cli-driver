@@ -1,5 +1,5 @@
 import type { SceneMethods } from '@cocos-cli/shared';
-import { enclosingPrefabInstance, fileIdIndex, findNodeByUuid, instanceOverridesFor, prefabFileId, requireActiveScene } from './engine.ts';
+import { componentOnNode, enclosingPrefabInstance, fileIdIndex, findNodeByUuid, instanceOverridesFor, prefabFileId, requireActiveScene } from './engine.ts';
 
 interface Divergence {
     uncovered: string[];
@@ -91,19 +91,23 @@ function propertyOverridesFor(
  * live component has since moved away from covers nothing.
  */
 export const prefabInstancePropertyOutcome: SceneMethods['prefabInstancePropertyOutcome'] = (
-    nodeUuid, cid, property,
+    nodeUuid, cid, property, componentUuid,
 ) => {
     try {
-        const cc = require('cc');
         const scene = requireActiveScene();
         const node = findNodeByUuid(scene, nodeUuid);
-        const owner = (node.components || []).find((component: any) =>
-            component && (cc.js as any)._getClassId(component.constructor) === cid);
-        if (!owner) return { success: false, error: `No component with cid '${cid}' on node ${nodeUuid}` };
+        const owner = componentOnNode(node, cid, componentUuid);
+        if (!owner) {
+            return {
+                success: false,
+                error: `No component ${componentUuid || `with cid '${cid}'`} on node ${nodeUuid}`
+            };
+        }
 
         const blank = {
             inPrefabInstance: false, known: false, carried: false,
-            instanceRoot: null, prefabAsset: null, overridePaths: [], uncovered: [], untyped: []
+            instanceRoot: null, prefabAsset: null, overridePaths: [], uncovered: [], untyped: [],
+            componentUuid: owner.uuid
         };
         const root = enclosingPrefabInstance(node);
         if (!root) return { success: true, data: { ...blank, reason: 'the component is not inside a prefab instance' } };

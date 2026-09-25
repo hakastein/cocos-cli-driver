@@ -36,7 +36,8 @@ export function renderTree(nodes: DumpNode[], options: TreeOptions = {}): string
     }
 
     const label = (node: DumpNode): string => {
-        const types = (node.components || []).map(component => component.className).join(',');
+        const types = siblingLabels((node.components || [])
+            .map(component => ({ name: component.className }))).join(',');
         return (addressed.get(node) || node.name)
             + (types ? `  [${types}]` : '')
             + (node.active ? '' : '  (off)')

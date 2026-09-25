@@ -175,12 +175,24 @@ export class MemoryDriver implements Driver {
         return attaches ? attaches[spelling] : undefined;
     }
 
-    private attachRequested(node: LiveNode, spelling: string): void {
-        for (const type of this.gainedFor(spelling) || [spelling]) {
-            if (!node.components.some(component => component.type === type)) {
-                this.attach(node, { type });
-            }
+    /**
+     * The class asked for attaches again on a node already carrying it — checked live 2026-09-25, a
+     * second `SplineAnimate` — unless the engine allows it once per node. A requirement attaches only
+     * where it is missing.
+     */
+    private attachRequested(node: LiveNode, spelling: string): boolean {
+        const gained = this.gainedFor(spelling) || [spelling];
+        const asked = gained[gained.length - 1];
+        const carries = (type: string) => node.components.some(component => component.type === type);
+        if (carries(asked) && this.onlyOnce(asked)) return false;
+        for (const type of gained) {
+            if (type === asked || !carries(type)) this.attach(node, { type });
         }
+        return true;
+    }
+
+    private onlyOnce(type: string): boolean {
+        return !!(this.spec && this.spec.disallowMultiple && this.spec.disallowMultiple.includes(type));
     }
 
     private attach(node: LiveNode, component: MemoryComponent): void {
@@ -220,7 +232,11 @@ export class MemoryDriver implements Driver {
             parent: { value: { uuid: node.parent ? node.parent.uuid : this.sceneUuid() } },
             __comps__: node.components.map(component => ({
                 __type__: component.type,
-                value: { enabled: { value: component.enabled }, ...component.props }
+                value: {
+                    uuid: { value: component.uuid, type: 'String' },
+                    enabled: { value: component.enabled },
+                    ...component.props
+                }
             }))
         };
     }
@@ -469,10 +485,10 @@ export class MemoryDriver implements Driver {
             addComponentToNode: ([uuid, type]) => this.addComponentToNode(uuid as string, type as string),
             findComponentOwners: ([options]) =>
                 this.componentOwners(String((options as { className?: unknown }).className)),
-            serializedComponentValue: ([uuid, cid, property]) =>
-                this.serializedValue(uuid as string, cid as string, property as string),
-            prefabInstancePropertyOutcome: ([uuid, cid, property]) =>
-                this.overrideOutcome(uuid as string, cid as string, property as string),
+            serializedComponentValue: ([uuid, cid, property, componentUuid]) => this.serializedValue(
+                uuid as string, cid as string, property as string, componentUuid as string | undefined),
+            prefabInstancePropertyOutcome: ([uuid, cid, property, componentUuid]) => this.overrideOutcome(
+                uuid as string, cid as string, property as string, componentUuid as string | undefined),
             resolveComponentReference: ([args]) => this.referencePlan(args as ReferenceArgs),
             applyComponentReference: ([args]) => this.applyReference(args as ReferenceArgs),
             componentReferenceOutcome: ([uuid, index, property]) =>
@@ -608,7 +624,9 @@ export class MemoryDriver implements Driver {
     private addComponentToNode(uuid: string, type: string): SceneResult<{ componentId: string }> {
         const node = this.requireNode(uuid);
         if (!this.registers(type)) return { success: false, error: `Component type not found: ${type}` };
-        this.attachRequested(node, type);
+        if (!this.attachRequested(node, type)) {
+            return { success: false, error: "Cannot read properties of null (reading 'uuid')" };
+        }
         return { success: true, data: { componentId: node.components[node.components.length - 1].uuid } };
     }
 
@@ -639,37 +657,40 @@ export class MemoryDriver implements Driver {
      * A component inside a prefab instance is absent from the scene file altogether, and its
      * overrides are what decide instead.
      */
-    private serializedValue(uuid: string, cid: string, property: string): SceneResult<SerializedValue> {
+    private serializedValue(
+        uuid: string, cid: string, property: string, componentUuid?: string
+    ): SceneResult<SerializedValue> {
+        const { component, about } = this.askedComponent(uuid, cid, componentUuid);
         const missing = (reason: string): SceneResult<SerializedValue> =>
-            ({ success: true, data: { found: false, value: null, reason } });
-        const component = this.findComponent(uuid, cid);
+            ({ success: true, data: { found: false, value: null, reason, ...about } });
         if (!component) return missing(`no component '${cid}' sits on the node`);
         if (this.requireNode(uuid).prefab) {
             return {
                 success: true,
                 data: {
-                    found: false, value: null, inPrefabInstance: true,
+                    found: false, value: null, inPrefabInstance: true, ...about,
                     reason: 'the scene file carries none of this component\'s properties'
                 }
             };
         }
         if (component.serialized) {
             return property in component.serialized
-                ? { success: true, data: { found: true, value: component.serialized[property] } }
+                ? { success: true, data: { found: true, value: component.serialized[property], ...about } }
                 : missing(`the serializer does not emit '${property}'`);
         }
         const descriptor = component.props[property];
         return isDumpDescriptor(descriptor)
-            ? { success: true, data: { found: true, value: descriptor.value } }
+            ? { success: true, data: { found: true, value: descriptor.value, ...about } }
             : missing(`the serializer does not emit '${property}'`);
     }
 
     private overrideOutcome(
-        uuid: string, cid: string, property: string
+        uuid: string, cid: string, property: string, componentUuid?: string
     ): SceneResult<PrefabOverrideOutcome> {
         const node = this.requireNode(uuid);
         const blank = {
-            instanceRoot: null, prefabAsset: null, overridePaths: [], uncovered: [], untyped: []
+            instanceRoot: null, prefabAsset: null, overridePaths: [], uncovered: [], untyped: [],
+            ...this.askedComponent(uuid, cid, componentUuid).about
         };
         if (!node.prefab) {
             return {
@@ -901,8 +922,9 @@ export class MemoryDriver implements Driver {
 
     private referencePlan(args: ReferenceArgs): SceneResult<ReferencePlanReport> {
         const node = this.requireNode(args.nodeUuid);
-        const componentIndex = node.components
-            .findIndex(component => component.type === args.componentType);
+        const owner = node.components
+            .filter(component => component.type === args.componentType)[args.componentIndex || 0];
+        const componentIndex = owner ? node.components.indexOf(owner) : -1;
         if (componentIndex < 0) {
             return { success: false, error: `the node carries no component '${args.componentType}'` };
         }
@@ -996,9 +1018,19 @@ export class MemoryDriver implements Driver {
             : outcome({ serialized: lost, projected: lost });
     }
 
-    private findComponent(uuid: string, cid: string): LiveComponent | undefined {
+    /** A scene script left over from before these questions named a component ignores its uuid. */
+    private askedComponent(
+        uuid: string, cid: string, componentUuid?: string
+    ): { component: LiveComponent | undefined; about: { componentUuid?: string } } {
+        const stale = !!(this.spec && this.spec.staleSceneScript);
+        const component = this.findComponent(uuid, cid, stale ? undefined : componentUuid);
+        return { component, about: component && !stale ? { componentUuid: component.uuid } : {} };
+    }
+
+    private findComponent(uuid: string, cid: string, componentUuid?: string): LiveComponent | undefined {
         const node = this.byUuid.get(uuid);
-        return node && node.components.find(component => component.type === cid);
+        return node && node.components.find(component =>
+            componentUuid ? component.uuid === componentUuid : component.type === cid);
     }
 
     private componentByUuid(uuid: string): LiveComponent | undefined {
@@ -1275,6 +1307,14 @@ export interface MemoryScene {
     /** What `close-scene` answers; the editor says `false` when it will not close the scene. */
     closeScene?: boolean;
     builder?: MemoryBuilder;
+    /** Classes the engine allows once per node; an add of a second one attaches nothing. */
+    disallowMultiple?: string[];
+    /**
+     * The scene worker keeps the script it loaded until the editor restarts. One loaded before the
+     * serializer and override questions took a component's uuid ignores it: it answers about the
+     * first component of the class and names none.
+     */
+    staleSceneScript?: boolean;
 }
 
 interface LiveComponent {
@@ -1311,6 +1351,8 @@ interface LiveNode {
 interface ReferenceArgs {
     nodeUuid: string;
     componentType: string;
+    /** Among the node's components of `componentType`; absent is the first. */
+    componentIndex?: number;
     property: string;
     targetUuid?: string;
     targetUuids?: string[];

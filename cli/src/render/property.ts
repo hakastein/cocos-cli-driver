@@ -11,8 +11,8 @@ function formatReference(uuid: unknown, lookup: ReferenceLookup): string {
     if (typeof uuid !== 'string' || !uuid) return EMPTY;
     const label = lookup(uuid);
     if (!label) return uuid;
-    const named = label.kind === 'component' && label.className
-        ? `${label.className} on ${label.path}`
+    const named = label.kind === 'component' && label.component
+        ? `${label.component} on ${label.path}`
         : label.path;
     return `${named}  ${uuid}`;
 }
