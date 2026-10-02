@@ -3,7 +3,7 @@
 An agent drives an open Cocos Creator editor from a shell: it runs `cocos <command>`, and the answer
 comes back on stdout — a non-empty stderr means the call did not succeed. This file is the
 vocabulary that whole surface is described in — the terms the
-tickets, the reports and the code all use for the same things. `CLAUDE.md` holds the architecture
+tickets, the reports and the code all use for the same things. `AGENTS.md` holds the architecture
 and the invariants; `docs/adr/` holds the decisions.
 
 ## Language

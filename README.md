@@ -67,8 +67,10 @@ With several editors open, `--project <substring>` picks one.
 
 | | |
 |---|---|
-| `skills/cocos/SKILL.md` | The command surface, as an agent reads it. |
-| `CLAUDE.md` | Architecture, invariants and the checkpoint procedure. |
+| `.agents/skills/cocos/SKILL.md` | The command surface, as an agent reads it. |
+| `AGENTS.md` | Shared agent rules, architecture and checkpoint procedure. |
+| `docs/agents/driver-guide.md` | Detailed implementation contracts and key-file map. |
+| `docs/agents/setup.md` | Agent discovery and workspace setup. |
 | `docs/specs/`, `docs/plans/` | The design records this was built from. |
 | `docs/source-inventory.md` | What the pre-CLI `source/` tree held, and where each module went. |
 

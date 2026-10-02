@@ -5,6 +5,15 @@ description: Cocos Creator, open project — what nodes and components a scene h
 
 # Cocos through the `cocos` CLI
 
+## Current command contract
+
+Use `cocos <group> --help` and the current driver source as the authority for command flags.
+The live examples below include historical output formats, not formatting guarantees.
+`--json` and `ecs census` have been removed. Do not restore the census or add a replacement
+TypeScript audit script. Success is exit 0; `ok` is not printed. Current failure exits:
+FAILED=1, usage=2, UNVERIFIED=3, UNPERSISTED=4, TIMEOUT=5, no editor=6.
+The current output contract is in `docs/agents/driver-guide.md` at the driver repository root.
+
 The open editor is the source of truth about the scene. The `cocos` binary asks it directly: one command in the shell, the answer on stdout.
 
 The bridge lives in the `hakastein/cocos-cli-driver` repository: `driver/` is the editor extension, `cli/` is the binary itself.
@@ -53,21 +62,45 @@ Flags live in each group's `--help` (`cocos node --help`). The useful ones: `--u
 
 ```bash
 $ cocos component get "Main Light" cc.DirectionalLight
+cc.DirectionalLight on Main Light  597uMYCbhEtJQc0ffJlcgA  enabled=true  hidden: 30  * — differs from the default
 color                          cc.Color                   #ffcb5eff
 useColorTemperature            Boolean                    false
 colorTemperature               Number                     7100
 _illuminanceHDR                Number                  *  120000
 …
-cc.DirectionalLight on Main Light  enabled=true  properties: 26  hidden: 30 …  * — differs from the default
 ```
+
+The head line carries the component's own uuid — the spelling a reference to this component is written with.
 
 **A star marks a value that diverges from the class default** — the authored one, the one a class-to-class move loses if nobody reads it first. No star and no verdict are different answers: a dump carrying no comparable default states none, the way `persisted=unknown` does.
 
-`--prop <name>` prints that value alone on stdout (`cocos component get "Main Camera" cc.Camera --prop fov` → `45`), which is what pipes into a shell variable. It reaches any name, including ones the listing collapses: editor chrome (`node`, `uuid`, `__scriptAsset`) and a `_x` storage field whose accessor `x` carries the same value. An accessor with no property of its own answers from its storage field — `--prop color` reports `cc.Camera._color`.
+`--prop <name>` prints the address and declared type on the first line and the value on the second (`cocos component get "Main Camera" cc.Camera --prop fov` → `cc.Camera.fov  Number` then `45`); `| tail -1` is the value alone. It reaches any name, including ones the listing collapses: editor chrome (`node`, `uuid`, `__scriptAsset`) and a `_x` storage field whose accessor `x` carries the same value. An accessor with no property of its own answers from its storage field — `--prop color` reports `cc.Camera._color`.
 
-References print as name plus uuid: a node by its scene path, a component by class and node, an asset by its `db://` url. `--json` gives the same reading structurally, with a `references` map and the `hidden` names.
+References print as name plus uuid: a node by its scene path, a component by its address on its node (`SplineContainer#2 on Game/Dropship/Arrival`), an asset by its `db://` url.
 
 The component answers to either spelling and is reported under the **registered** class (`cc.Camera`, `GameBootstrap`).
+
+### Several components of one class
+
+A node can carry two components of one class — `SplineAnimate` for the arrival and another for the departure. They are addressed the way same-named sibling nodes are: **the class plus its position in component order, `#1`, `#2`, on every member of the group**. `scene tree` and `node get` print them that way. Checked live 2026-09-25 on a scratch node in `cc_action_1a`:
+
+```
+$ cocos node get Environment/__ply151_probe
+__ply151_probe  [SplineAnimate#1,SplineAnimate#2]  eaqfhW7yBEWoUX2sK7w1rk
+$ cocos component get Environment/__ply151_probe SplineAnimate#2
+SplineAnimate#2 on Environment/__ply151_probe  f7X5vmHCZChLC4fw+fhRhC  enabled=true  hidden: 9
+container  SplineContainer      (empty)
+…
+```
+
+Every `component` subcommand — `get`, `set`, `rm`, `reset`, `array` — takes `SplineAnimate#2`. A bare class the node carries more than once fails with code 1 and lists each address with its uuid:
+
+```
+$ cocos component get Environment/__ply151_probe SplineAnimate
+FAILED  'SplineAnimate' matches 2 components of the node: SplineAnimate#1 b3mAguP5JNVp5Yftq3UMcK, SplineAnimate#2 f7X5vmHCZChLC4fw+fhRhC
+```
+
+A class the node carries once answers to its bare name and to `#1`. The numbering follows component order, so removing `#1` makes the old `#2` the only one, addressed by its bare name.
 
 ## Addressing: the full path from a scene root
 
@@ -135,6 +168,16 @@ cocos component set "Characters/guard_1" TargetPolicy --prop target --value null
 
 An array field takes a JSON array of the same spellings. A field declared without a type takes `--target-component <type>` to say which component of the target node is meant.
 
+**A node path names a component only while the node carries one component of the class the field takes.** A node carrying several is refused before the write, code 1, listing each with its uuid. Write the one meant by its uuid — the head line of `component get` carries it — or by position through `--target-component`:
+
+```bash
+cocos component get Game/Dropship/draft_model_dropship SplineAnimate#2    # head line: SplineAnimate#2 on …  <uuid>
+cocos component set Game ActionFlow --prop departure --value <that uuid>
+cocos component set Game ActionFlow --prop departure --value Game/Dropship/draft_model_dropship --target-component SplineAnimate#2
+```
+
+Checked live 2026-09-25: a `SplineContainer` field aimed at a node carrying two of them answered `FAILED  '<path>': 'SplineContainer' matches 2 components of the node: SplineContainer#1 9e6F…, SplineContainer#2 52sT…`; the same write by the second uuid landed in the second, `persisted=true`, and read back as `SplineContainer#2 on <path>`.
+
 **A reference inside a serializable value class is spelled the same way, inside the class's own JSON.** `--prop saleCue --value '{"sound":"Audio/SfxSale"}'` writes that member and leaves every member it does not name alone; a component-typed member takes the node path and the component on that node is what lands in the slot. An address naming no node that carries the class is refused before the write, listing the nodes that do.
 
 **An array of plain values is written whole**, `--prop saleAmounts --value "[600,200,400]"`, and the array ends up exactly that long. `component array` moves and removes single elements of one already there; there is no per-element add.
@@ -143,7 +186,9 @@ An array field takes a JSON array of the same spellings. A field declared withou
 
 Done editing — save the scene yourself with `cocos scene save`. Asking a human to press Ctrl+S is a wasted round trip.
 
-Engine components are registered under a prefix (`cc.MeshRenderer`), user ones under their own class name. Every subcommand — `get`, `add`, `rm`, `set`, and `node create --component` — takes either spelling and prints the **registered** one; where the two differ, trust the report. Checked live: `component add "Game" UIOpacity` answers `ok  cc.UIOpacity added to Game`. A component that never appeared gives a code-1 failure listing what the node does carry, registered names and all.
+Engine components are registered under a prefix (`cc.MeshRenderer`), user ones under their own class name. Every subcommand — `get`, `add`, `rm`, `set`, and `node create --component` — takes either spelling and prints the **registered** one; where the two differ, trust the report. A component that never appeared gives a code-1 failure listing what the node does carry.
+
+**`component add` adds a component on every call**, one more of the class when the node already carries it, and prints the new component's address and uuid. Checked live 2026-09-25 on a node already carrying one: `SplineAnimate#2 added to Environment/__ply151_probe  f7X5vmHCZChLC4fw+fhRhC`. Run twice, it leaves two. A class the engine allows once per node (`cc.UITransform`) fails with code 1 after about 4 s: `did not appear … after the add, which already carried one`. The same holds for `node create --component`: a requirement the editor attached for an earlier `--component` (`cc.UITransform` for `cc.Sprite`) fails when listed again after it.
 
 ## The verdict vocabulary
 
@@ -362,6 +407,6 @@ The preview is live at `http://localhost:7456/` for as long as the editor is ope
 
 ## When a command is missing
 
-The bridge is our own repository. A command goes into `cli/src/commands/`, an engine primitive into `driver/src/scene/`. Its layout and the procedure for adding either are in that repository's `CLAUDE.md`.
+The bridge is our own repository. A command goes into `cli/src/commands/`, an engine primitive into `driver/src/scene/`. Its layout and the procedure for adding either are in that repository's `AGENTS.md`.
 
 A workaround written in silence outlives the task and reaches the next person as a surprise.
